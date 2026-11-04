@@ -22,6 +22,13 @@ def load_manifest(path: Path) -> pd.DataFrame:
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(f"manifest {path} is missing required columns: {missing}")
+    for column in ("video_id", "person_id", "group"):
+        blank = df[column].isna() | (df[column].astype(str).str.strip() == "")
+        if blank.any():
+            raise ValueError(
+                f"manifest {path} has {int(blank.sum())} row(s) with blank {column} "
+                f"(csv data rows {[int(i) + 2 for i in df.index[blank]][:10]})"
+            )
     duplicated = sorted(df.loc[df["video_id"].duplicated(), "video_id"].unique())
     if duplicated:
         raise ValueError(f"manifest {path} has duplicate video_id values: {duplicated}")

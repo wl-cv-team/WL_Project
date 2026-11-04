@@ -35,6 +35,18 @@ def test_duplicate_video_id_raises(tmp_path: Path):
         load_manifest(path)
 
 
+@pytest.mark.parametrize("column", ["video_id", "person_id", "group"])
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_identifier_raises_naming_column(tmp_path: Path, column: str, blank: str):
+    row = {"video_id": "v1", "person_id": "a01", "group": "A"}
+    row[column] = blank
+    body = f"{row['video_id']},{row['person_id']},{row['group']},p,yes,ok\nv2,a02,A,p,yes,ok\n"
+    with pytest.raises(ValueError) as err:
+        load_manifest(_write(tmp_path, body))
+    assert column in str(err.value)
+    assert "1 row" in str(err.value)
+
+
 def test_valid_manifest_loads_with_string_ids(tmp_path: Path):
     path = _write(tmp_path, "v1,001,A,p,yes,ok\nv2,002,B,p,no,ok\n")
     df = load_manifest(path)

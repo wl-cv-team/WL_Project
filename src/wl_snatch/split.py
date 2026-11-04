@@ -35,6 +35,10 @@ def make_person_split(
     when none). ``attrs`` is not carried through every pandas operation, so
     read it from the returned frame directly.
 
+    Rows are not filtered by read_status: a video that could not be read still
+    receives its person's role, because the split is about people. Later stages
+    record unreadable videos as N/A with a reason.
+
     Returns columns video_id, person_id, group, role, sorted by video_id.
     Raises ValueError if validation_fraction is not in (0, 1) or if one
     person_id appears in more than one group.
@@ -70,8 +74,22 @@ def make_person_split(
     return result
 
 
+def single_person_groups(split: pd.DataFrame) -> tuple[str, ...]:
+    """Sorted groups that contain exactly one person_id, computed from the frame."""
+    counts = split.groupby("group")["person_id"].nunique()
+    return tuple(sorted(counts[counts == 1].index))
+
+
 def assert_no_person_leak(split: pd.DataFrame) -> None:
-    """Raise AssertionError if any person_id appears in more than one role."""
+    """Raise AssertionError on a person in more than one role or an invalid role.
+
+    Valid roles are exactly "train" and "validation"; NaN, blank or any other
+    value in the role column also raises.
+    """
+    invalid = ~split["role"].isin([TRAIN, VALIDATION])
+    if invalid.any():
+        values = sorted({repr(v) for v in split.loc[invalid, "role"]})
+        raise AssertionError(f"role has {int(invalid.sum())} invalid value(s): {values}")
     roles_per_person = split.groupby("person_id")["role"].nunique()
     leaked = sorted(roles_per_person[roles_per_person > 1].index)
     if leaked:

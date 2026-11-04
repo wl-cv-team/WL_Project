@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from wl_snatch.split import assert_no_person_leak, make_person_split
+from wl_snatch.split import assert_no_person_leak, make_person_split, single_person_groups
 
 
 def _manifest(persons_by_group: dict[str, int], videos_per_person: int = 3) -> pd.DataFrame:
@@ -90,3 +90,42 @@ def test_leak_checker_raises_on_leaky_split():
     )
     with pytest.raises(AssertionError, match="a01"):
         assert_no_person_leak(leaky)
+
+
+def test_non_ok_read_status_row_still_gets_a_role():
+    m = _manifest({"A": 4, "B": 4})
+    m.loc[0, "read_status"] = "error"
+    split = make_person_split(m, 0, 0.3)
+    assert len(split) == len(m)
+    assert split["role"].isin(["train", "validation"]).all()
+    assert split.loc[split["video_id"] == m.loc[0, "video_id"], "role"].notna().all()
+
+
+def test_half_way_rounding_rounds_up():
+    # 5 persons * 0.3 = 1.5 -> 2 validation persons (round half up)
+    split = make_person_split(_manifest({"A": 5}), 0, 0.3)
+    assert split.loc[split["role"] == "validation", "person_id"].nunique() == 2
+
+
+def test_person_with_single_video():
+    split = make_person_split(_manifest({"A": 4}, videos_per_person=1), 0, 0.3)
+    assert len(split) == 4
+    assert_no_person_leak(split)
+
+
+def test_single_person_groups_recomputed_from_frame():
+    split = make_person_split(_manifest({"A": 5, "C": 1, "B": 1}), 0, 0.3)
+    derived = split.sort_values("video_id", ascending=False).copy()
+    derived.attrs.clear()
+    assert single_person_groups(derived) == ("B", "C")
+    assert single_person_groups(make_person_split(_manifest({"A": 3}), 0, 0.3)) == ()
+
+
+@pytest.mark.parametrize("bad", [None, "", "test"])
+def test_leak_checker_rejects_invalid_role(bad):
+    split = pd.DataFrame(
+        {"video_id": ["v1", "v2"], "person_id": ["a01", "a02"], "group": ["A", "A"],
+         "role": ["train", bad]}
+    )
+    with pytest.raises(AssertionError, match="role"):
+        assert_no_person_leak(split)
