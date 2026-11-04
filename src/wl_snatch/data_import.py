@@ -6,8 +6,10 @@ is written, and entries are only read through zipfile streaming.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -27,7 +29,7 @@ JUNK_FILE_NAMES = (".DS_Store",)
 NOT_IMPORTED_SUFFIXES = (".cache",)
 
 _DRIVE_RE = re.compile(r"^[A-Za-z]:")
-_YAML_PATH_RE = re.compile(r"^path:.*$", re.MULTILINE)
+_YAML_PATH_RE = re.compile(r"^(\ufeff?)path:[^\r\n]*", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -63,13 +65,49 @@ def _destination_parts(parts: tuple[str, ...]) -> tuple[str, ...] | None:
     return parts
 
 
+def _is_dataset_yaml(dest_parts: tuple[str, ...]) -> bool:
+    return dest_parts[0].startswith("plate_dataset") and dest_parts[-1] == "dataset.yaml"
+
+
+def _check_collisions(data_root: Path, dests: list[Path]) -> None:
+    """Raise ValueError for file-versus-directory conflicts, before any write."""
+    planned = set(dests)
+    for dest in dests:
+        if dest.is_dir():
+            raise ValueError(f"destination is an existing directory: {dest}")
+        for parent in dest.parents:
+            if parent == data_root.parent:
+                break
+            if parent in planned or (parent.exists() and not parent.is_dir()):
+                raise ValueError(f"file/directory conflict at: {parent}")
+
+
+def _copy_atomic(src, dest: Path, content: bytes | None) -> bool:
+    """Write to a temp file next to dest, then link into place. False if dest exists."""
+    fd, tmp_name = tempfile.mkstemp(prefix=".import-", dir=dest.parent)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            if content is not None:
+                out.write(content)
+            else:
+                shutil.copyfileobj(src, out)
+        try:
+            os.link(tmp_name, dest)  # never overwrites
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        os.unlink(tmp_name)
+
+
 def import_archive(zip_path: Path, data_dir: Path) -> ImportReport:
     data_root = Path(data_dir).resolve()
-    plan: list[tuple[zipfile.ZipInfo, Path, tuple[str, ...]]] = []
+    # (info, dest, dest_parts, rewritten yaml bytes or None)
+    plan: list[tuple[zipfile.ZipInfo, Path, tuple[str, ...], bytes | None, bool]] = []
     not_imported: list[str] = []
 
     with zipfile.ZipFile(zip_path) as zf:
-        # Validate every entry before anything is written.
+        # Validate and prepare every entry before anything is written.
         for info in zf.infolist():
             parts = _split_name(info.filename)
             if info.is_dir():
@@ -81,32 +119,42 @@ def import_archive(zip_path: Path, data_dir: Path) -> ImportReport:
             dest = data_root.joinpath(*dest_parts).resolve()
             if not dest.is_relative_to(data_root):
                 raise ValueError(f"archive entry resolves outside data dir: {info.filename!r}")
-            plan.append((info, dest, dest_parts))
+            content = None
+            changed = False
+            if _is_dataset_yaml(dest_parts):
+                try:
+                    text = zf.read(info).decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise ValueError(f"{info.filename!r} is not valid UTF-8: {exc}") from exc
+                new_text = _YAML_PATH_RE.sub(lambda m: m.group(1) + "path: .", text)
+                changed = new_text != text
+                content = new_text.encode("utf-8")
+            plan.append((info, dest, dest_parts, content, changed))
+
+        _check_collisions(data_root, [item[1] for item in plan])
 
         files_copied = 0
         videos_copied = 0
         rewritten: list[str] = []
         skipped: list[str] = []
 
-        for info, dest, dest_parts in plan:
+        for info, dest, dest_parts, content, changed in plan:
             rel = PurePosixPath(*dest_parts).as_posix()
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                out = open(dest, "xb")
-            except FileExistsError:
+            if dest.exists():
                 skipped.append(rel)
                 continue
-            with out, zf.open(info) as src:
-                is_yaml = dest_parts[0].startswith("plate_dataset") and dest.name == "dataset.yaml"
-                if is_yaml:
-                    text = src.read().decode("utf-8")
-                    new_text = _YAML_PATH_RE.sub("path: .", text)
-                    if new_text != text:
-                        rewritten.append(rel)
-                    out.write(new_text.encode("utf-8"))
-                else:
-                    shutil.copyfileobj(src, out)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if content is not None:
+                created = _copy_atomic(None, dest, content)
+            else:
+                with zf.open(info) as src:
+                    created = _copy_atomic(src, dest, None)
+            if not created:
+                skipped.append(rel)
+                continue
             files_copied += 1
+            if changed:
+                rewritten.append(rel)
             if dest_parts[:2] == RAW_VIDEO_DEST:
                 videos_copied += 1
 
