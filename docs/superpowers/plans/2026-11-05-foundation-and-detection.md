@@ -1,0 +1,267 @@
+# 기초 구축과 탐지 기준선 Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 협업 가능한 저장소 뼈대와 데이터 기반을 만들고, 원판 탐지 기준선(YOLO26 → YOLO11 → YOLOv8 비교)을 같은 평가 조건으로 확보한다.
+
+**Architecture:** 로직은 모두 `src/wl_snatch/`의 `.py` 모듈에 둔다. `scripts/`는 모듈을 호출만 하는 실행기이고, `tutorials/`의 노트북은 모듈을 불러다 쓰기만 한다. 단계 사이는 `contracts.py`의 데이터 형식으로만 주고받는다.
+
+**Tech Stack:** uv, Python(버전은 Task 1에서 확인), Ultralytics, OpenCV, NumPy, pandas, PyTorch, pytest.
+
+**Spec:** `docs/superpowers/specs/2026-11-05-project-foundation-design.md`
+
+## Global Constraints
+
+- 노트북에는 TDD 코드와 로직을 두지 않는다. 간단한 조건문만 허용한다. (spec 6절)
+- 사람 단위로 학습/검증을 분할한다. 같은 `person_id`를 양쪽에 넣지 않는다. (spec 6절)
+- 측정이 불가능하면 값을 채우지 않고 `N/A`와 사유를 남긴다. (spec 8절)
+- `data/`는 git 제외. 원본 영상은 수정하지 않는다. (spec 5·8절)
+- 좋은/나쁜 동작을 단정하는 문장과 비유적 표현을 문서, 코드, 커밋 메시지, 출력 라벨에 쓰지 않는다. (spec 4절)
+- 모델 종류는 코드에 고정하지 않고 설정으로 교체한다. (spec 3절)
+- 모델과 라이브러리 버전은 기억이 아니라 2026년 11월 기준 공식 문서로 확인해서 적는다. (spec 9-1절)
+- 한 번에 한 축만 바꾸고 seed와 조건을 기록한다. (spec 9-2절)
+- 기본 환경은 MacBook M2 Air 8GB다. (spec 5절)
+- `main` 직접 push 금지. `feature/<주제>` 브랜치와 PR 상호 리뷰. (spec 5절)
+- TCN 구현, 포즈 추정, 바 경로, 구간 분할은 이 계획에 넣지 않는다. (spec 9-1절)
+
+## Review Focus
+
+1. **경로 탈출이 있는 zip.** `../` 또는 절대경로 항목이 든 압축은 복사하지 않고 `ValueError`로 거부한다. (Task 3)
+2. **영상이 1개뿐인 사람, 사람이 1명뿐인 그룹.** 분할은 결정적이고 누수가 없으며, 한쪽이 비는 경우를 보고한다. (Task 4)
+3. **라벨이 비었거나 범위를 벗어났거나 이미지와 짝이 없는 경우.** 죽지 않고 보고서에 사유와 함께 담는다. (Task 5)
+4. **원판이 없는 영상(`has_plate=no`)에서 박스가 나온 경우, 읽을 수 없는 영상.** 앞의 경우는 오탐으로 센다. 뒤의 경우는 `N/A`와 사유로 남기고 평균에서 제외하며 개수를 보고한다. (Task 6)
+5. **요청한 장치(mps/cuda)를 쓸 수 없는 경우.** 조용히 cpu로 바꾸지 않고, 바뀐 사실과 이유를 기록한다. (Task 7)
+
+---
+
+## Checkpoint (Task 5 직후)
+
+Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-reuse-and-tcn-gate.md`에 다음을 기록한다. 이 문서가 없으면 Task 6 이후를 진행하지 않는다.
+1. 아카이브 라벨 재사용 여부, 재라벨링 필요 시 담당자와 규모.
+2. TCN 적용 위치 승인 절차와 "시도했으나 효과 없음" 결과의 허용 여부. (이 계획은 TCN을 구현하지 않으므로 기록만 한다.)
+
+---
+
+### Task 1: 저장소 뼈대와 문서 기본
+
+**Files:**
+- Create: `pyproject.toml`, `.python-version`, `.gitignore`, `README.md`, `.github/pull_request_template.md`
+- Create: `src/wl_snatch/__init__.py`, `tests/test_scaffold.py`
+- Create: `docs/vision.md`, `docs/roadmap.md`, `docs/decisions/0001-environment.md`, `docs/literature/README.md`, `data/README.md`
+- Create (빈 디렉터리 유지): `scripts/.gitkeep`, `tutorials/.gitkeep`
+
+**Interfaces:**
+- Produces: 설치된 패키지 `wl_snatch`. 이후 모든 Task가 `from wl_snatch... import ...`로 가져온다.
+
+- [ ] **Step 1: 버전 확인.** 공식 문서로 Python, Ultralytics, PyTorch의 현재 안정 버전과 서로의 호환을 확인한다. 결과를 `docs/decisions/0001-environment.md`에 날짜와 출처(URL)와 함께 적는다.
+- [ ] **Step 2: 실패하는 테스트 작성** `tests/test_scaffold.py`:
+  - `test_package_imports`: `import wl_snatch` 성공.
+  - `test_data_dir_is_git_ignored`: `git check-ignore data/raw/anything.mp4`가 0을 반환.
+  - `test_weights_are_git_ignored`: `git check-ignore model.pt`가 0을 반환.
+- [ ] **Step 3: 실패 확인.** Run: `uv run pytest tests/test_scaffold.py -v` → FAIL (패키지 없음).
+- [ ] **Step 4: 뼈대 작성.** `pyproject.toml`은 setuptools src 레이아웃, 패키지명 `wl_snatch`, spec 9절의 라이브러리와 dev 그룹(pytest, jupyterlab). `.gitignore`는 `data/*`(단 `data/README.md` 제외), `*.pt`, `artifacts/`, `.env`, `.venv/`, 노트북 체크포인트를 제외한다. `docs/vision.md`에는 spec 1·2·4절을 옮겨 쓰고 **표현 규칙**(근거 전에 판정 금지, 비유 금지, 측정값과 `N/A`+사유 중심)을 별도 절로 둔다. `docs/roadmap.md`는 G2~G7의 순서와 의존성만 적고 CI를 "첫 PR 이후"로 적는다. `docs/literature/README.md`에는 이 대화에서 찾은 문헌과 URL을 옮기고, 각 항목에 "초록 기준, 원문 미확인" 표기를 붙인다. PR 템플릿에는 표현 규칙 체크박스, "노트북에 로직 없음" 체크박스, 리뷰어가 확인할 단계 간 약속 항목을 넣는다.
+- [ ] **Step 5: 통과 확인.** Run: `uv run pytest tests/test_scaffold.py -v` → 3 passed.
+- [ ] **Step 6: 커밋.** `main`에 커밋이 아직 없다. 동료의 요청으로 사용자(fabxoe)가 초기 프레임을 만드는 중이므로, `main`의 첫 부트스트랩 커밋은 **사용자가 예외로 직접 올린다.** (에이전트는 `main`에 커밋하거나 push하지 않는다.) 사용자가 `main`을 올린 것을 확인한 뒤, 브랜치 `feature/scaffold`에서 커밋하고 PR을 올린다. 그때까지는 변경을 커밋하지 않고 작업 트리에 둔다.
+
+### Task 2: 단계 간 약속 `contracts.py`
+
+**Files:**
+- Create: `src/wl_snatch/contracts.py`, `docs/contracts/detection.md`
+- Test: `tests/test_contracts.py`
+
+**Interfaces:**
+- Produces:
+  - `BoxDetection(frame_index: int, x1: float, y1: float, x2: float, y2: float, confidence: float, label: str)` frozen dataclass, 좌표는 픽셀.
+  - `FrameDetections(video_id: str, frame_index: int, boxes: tuple[BoxDetection, ...], na_reason: str | None)` frozen dataclass. `na_reason`이 None이 아니면 이 프레임은 `N/A`이며 `boxes`는 비어 있어야 한다.
+  - `write_detections_csv(frames: list[FrameDetections], path: Path) -> None`
+  - `read_detections_csv(path: Path) -> list[FrameDetections]`
+
+- [ ] **Step 1: 실패하는 테스트 작성.**
+  - `test_na_frame_must_have_no_boxes`: `na_reason`이 있는데 박스가 있으면 `ValueError`.
+  - `test_csv_roundtrip_preserves_frames`: 박스 있는 프레임, 박스 없는 프레임(탐지 0개, `na_reason=None`), `N/A` 프레임을 쓰고 읽어 동일한지 확인.
+  - `test_zero_detections_differs_from_na`: 읽은 뒤에도 "0개 탐지"와 "N/A"가 구분되는지 확인.
+- [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_contracts.py -v` → FAIL.
+- [ ] **Step 3: 구현.** CSV 한 행은 박스 하나이고, 박스가 없는 프레임은 좌표가 빈 한 행으로 쓴다(프레임 존재를 보존하기 위함).
+- [ ] **Step 4: 통과 확인.** → 3 passed.
+- [ ] **Step 5: `docs/contracts/detection.md` 작성.** 형식, 좌표 규칙, `N/A` 규칙, 다음 단계(바 경로)가 이 형식을 입력으로 받는다는 점을 적는다.
+- [ ] **Step 6: 커밋.**
+
+### Task 3: 아카이브 데이터 가져오기
+
+**Files:**
+- Create: `src/wl_snatch/data_import.py`, `scripts/import_archive_data.py`
+- Test: `tests/test_data_import.py`
+
+**Interfaces:**
+- Produces:
+  - `ImportReport(files_copied: int, videos_copied: int, rewritten_paths: tuple[str, ...])` frozen dataclass.
+  - `import_archive(zip_path: Path, data_dir: Path) -> ImportReport`
+
+**동작:** zip의 `raw video/` 폴더(공백 포함)를 `data/raw/videos/`로 복사한다. 이는 `videos.csv`의 `path` 열 형식(`data/raw/videos/<id>.mp4`)과 맞춘 것이다. `metadata/`, `annotations/`, `splits/`, `plate_dataset/`, `plate_dataset_v2/`는 같은 이름으로 `data/` 아래에 둔다. `dataset.yaml`의 `path:`는 다른 사람의 절대경로이므로 가져올 때 상대경로 `.`로 다시 쓴다. 허용된 최상위 폴더 밖의 항목은 복사하지 않고 `skipped` 대신 보고한다. 이미 있는 파일은 덮어쓰지 않는다.
+
+- [ ] **Step 1: 실패하는 테스트 작성** (임시 폴더에 작은 zip을 만든다).
+  - `test_raw_video_folder_is_mapped_to_data_raw_videos`
+  - `test_dataset_yaml_path_is_rewritten_to_relative`
+  - `test_zip_slip_entry_is_rejected`: `../evil.txt` 항목이 있으면 `ValueError`, 아무것도 복사되지 않음.
+  - `test_absolute_path_entry_is_rejected`
+  - `test_existing_file_is_not_overwritten`
+- [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_data_import.py -v` → FAIL.
+- [ ] **Step 3: 구현.** 모든 항목의 해석된 경로가 `data_dir` 밑에 있는지 복사 전에 전부 검사한 뒤 복사한다.
+- [ ] **Step 4: 통과 확인.** → 5 passed.
+- [ ] **Step 5: 실제 실행.** Run: `uv run python scripts/import_archive_data.py "/Users/fabxoe/Downloads/drive-download-20261104T143056Z-1-001.zip"`. 기대: `videos_copied=54`, `data/metadata/videos.csv` 존재, `git status`에 `data/` 파일이 나타나지 않음.
+- [ ] **Step 6: 커밋.**
+
+### Task 4: manifest 검증과 사람 단위 분할
+
+**Files:**
+- Create: `src/wl_snatch/manifest.py`, `src/wl_snatch/split.py`, `scripts/make_split.py`
+- Test: `tests/test_manifest.py`, `tests/test_split.py`
+
+**Interfaces:**
+- Consumes: `data/metadata/videos.csv` (열: `video_id, person_id, group, has_plate, path, read_status, ...`).
+- Produces:
+  - `load_manifest(path: Path) -> pd.DataFrame` — 필수 열이 없으면 `ValueError`(없는 열 이름을 메시지에 포함).
+  - `make_person_split(manifest: pd.DataFrame, seed: int, validation_fraction: float) -> pd.DataFrame` — 열 `video_id, person_id, group, role`, `role`은 `train` 또는 `validation`.
+  - `assert_no_person_leak(split: pd.DataFrame) -> None` — 같은 `person_id`가 두 역할에 있으면 `AssertionError`.
+
+**동작:** 분할 단위는 `person_id`. 그룹(A/B/C)별로 사람을 나눠서 각 그룹이 가능하면 양쪽에 들어가게 한다. 한 그룹에 사람이 1명뿐이면 그 사람은 `train`에 넣고 보고한다.
+
+- [ ] **Step 1: 실패하는 테스트 작성.**
+  - `test_missing_required_column_names_the_column`
+  - `test_split_has_no_person_in_both_roles`
+  - `test_split_is_deterministic_for_same_seed`
+  - `test_person_with_many_videos_stays_in_one_role`
+  - `test_group_with_single_person_goes_to_train_and_is_reported`
+  - `test_leak_checker_raises_on_leaky_split`
+- [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_manifest.py tests/test_split.py -v` → FAIL.
+- [ ] **Step 3: 구현.** 정렬된 `person_id`를 seed로 섞고 그룹별 비율로 나눈다. 결과는 `data/splits/person_split.csv`로 저장한다(아카이브의 `split_role` 열은 참고만 하고 쓰지 않는다).
+- [ ] **Step 4: 통과 확인.** → 6 passed.
+- [ ] **Step 5: 실제 실행.** Run: `uv run python scripts/make_split.py --seed 0 --validation-fraction 0.3`. 기대: 사람 수와 그룹별 인원이 출력되고 `assert_no_person_leak`가 통과한다.
+- [ ] **Step 6: 커밋.**
+
+### Task 5: 아카이브 탐지 라벨 점검
+
+**Files:**
+- Create: `src/wl_snatch/label_audit.py`, `scripts/audit_plate_labels.py`, `scripts/plate_label_contact_sheet.py`
+- Test: `tests/test_label_audit.py`
+
+**Interfaces:**
+- Produces:
+  - `LabelIssue(image: str, kind: str, detail: str)` frozen dataclass. `kind`는 `missing_label`, `empty_label`, `out_of_range`, `bad_class`, `orphan_label`, `duplicate_box` 중 하나.
+  - `AuditReport(images: int, labeled_boxes: int, issues: tuple[LabelIssue, ...])` frozen dataclass.
+  - `audit_yolo_labels(images_dir: Path, labels_dir: Path, allowed_classes: frozenset[int]) -> AuditReport`
+
+- [ ] **Step 1: 실패하는 테스트 작성** (임시 폴더에 가짜 이미지와 라벨).
+  - `test_clean_dataset_has_no_issues`
+  - `test_image_without_label_file_is_reported`
+  - `test_empty_label_file_is_reported`
+  - `test_coordinate_outside_zero_one_is_reported`
+  - `test_unknown_class_id_is_reported`
+  - `test_label_without_image_is_reported`
+  - `test_two_identical_boxes_are_reported_as_duplicate`
+- [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_label_audit.py -v` → FAIL.
+- [ ] **Step 3: 구현.** 라벨은 YOLO 형식(`class cx cy w h`, 0~1)으로 읽는다. 예외를 던지지 않고 `LabelIssue`로 담는다.
+- [ ] **Step 4: 통과 확인.** → 7 passed.
+- [ ] **Step 5: 실제 점검.** `plate_dataset`(30장)과 `plate_dataset_v2`(150장)에 실행해 `artifacts/label_audit/`에 보고서를 저장한다. `plate_label_contact_sheet.py`로 박스를 그린 이미지 모음을 만들어, 사람이 눈으로 확인할 수 있게 한다.
+- [ ] **Step 6: 커밋.** 이후 **Checkpoint**로 간다.
+
+### Task 6: 탐지 평가기
+
+**Files:**
+- Create: `src/wl_snatch/eval_detection.py`
+- Test: `tests/test_eval_detection.py`
+
+**Interfaces:**
+- Consumes: `FrameDetections`, `BoxDetection` (Task 2).
+- Produces:
+  - `GroundTruthFrame(video_id: str, frame_index: int, boxes: tuple[tuple[float, float, float, float], ...])` frozen dataclass.
+  - `DetectionMetrics(precision: float | None, recall: float | None, false_positives_per_frame: float | None, frames_evaluated: int, frames_na: int, na_reasons: dict[str, int])`
+  - `evaluate_detections(predictions: list[FrameDetections], truths: list[GroundTruthFrame], iou_threshold: float) -> DetectionMetrics`
+
+**동작:** 오탐은 정답과 IoU가 임계값 미만이거나 이미 매칭된 정답에 또 매칭된 예측이다. 정답 박스가 없는 프레임(원판 없음)의 예측은 모두 오탐이다. `N/A` 프레임은 평균에서 빼고 사유별로 센다. 분모가 0이면 해당 지표는 `None`이다.
+
+- [ ] **Step 1: 실패하는 테스트 작성.**
+  - `test_perfect_prediction_gives_precision_and_recall_one`
+  - `test_box_below_iou_threshold_counts_as_false_positive_and_miss`
+  - `test_duplicate_prediction_on_same_truth_counts_one_false_positive`
+  - `test_box_on_frame_without_plate_is_false_positive`
+  - `test_na_frames_are_excluded_and_counted_by_reason`
+  - `test_no_truth_boxes_anywhere_gives_recall_none`
+  - `test_no_predictions_gives_precision_none`
+- [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_eval_detection.py -v` → FAIL.
+- [ ] **Step 3: 구현.** 확신도가 높은 예측부터 탐욕적으로 매칭한다.
+- [ ] **Step 4: 통과 확인.** → 7 passed.
+- [ ] **Step 5: 커밋.**
+
+### Task 7: 탐지기와 설정
+
+**Files:**
+- Create: `src/wl_snatch/config.py`, `src/wl_snatch/detector.py`, `scripts/train_detector.py`, `scripts/run_detector.py`
+- Test: `tests/test_config.py`, `tests/test_detector.py`
+
+**Interfaces:**
+- Produces:
+  - `DetectorConfig(model_name: str, imgsz: int = 640, conf: float = 0.25, device: str = "auto", seed: int = 0, epochs: int = 50)` frozen dataclass. `imgsz`, `epochs`가 0 이하이거나 `conf`가 0~1 밖이면 `ValueError`.
+  - `resolve_device(requested: str, mps_available: bool, cuda_available: bool) -> tuple[str, str | None]` — 사용할 장치와, 요청과 다를 때의 사유.
+  - `detect_video(video_path: Path, video_id: str, model: Callable, config: DetectorConfig) -> list[FrameDetections]` — `model`은 프레임을 받아 박스 목록을 돌려주는 호출 가능 객체이므로 테스트에서 가짜로 바꿀 수 있다. 읽을 수 없는 영상은 `na_reason="video_unreadable"`인 프레임 하나를 돌려준다.
+  - `load_ultralytics_model(config: DetectorConfig) -> Callable` — Ultralytics를 감싼다. 가중치 이름은 Step 1에서 확인한 값을 쓴다.
+
+- [ ] **Step 1: 가중치 이름 확인.** 공식 문서로 YOLO26, YOLO11, YOLOv8 nano 계열의 정확한 가중치 이름을 확인해 `docs/decisions/0001-environment.md`에 추가한다. 학습은 `dataset.yaml`의 `plate` 단일 클래스로 파인튜닝한다.
+- [ ] **Step 2: 실패하는 테스트 작성.**
+  - `test_config_rejects_nonpositive_imgsz_and_epochs`
+  - `test_config_rejects_conf_outside_zero_one`
+  - `test_resolve_device_returns_requested_when_available`
+  - `test_resolve_device_unavailable_returns_cpu_with_reason`
+  - `test_auto_prefers_mps_then_cuda_then_cpu`
+  - `test_detect_video_uses_injected_model_for_every_frame`
+  - `test_unreadable_video_gives_na_frame_with_reason`
+- [ ] **Step 3: 실패 확인.** Run: `uv run pytest tests/test_config.py tests/test_detector.py -v` → FAIL.
+- [ ] **Step 4: 구현.** 가짜 모델로 테스트가 통과하게 한 뒤 `load_ultralytics_model`을 붙인다.
+- [ ] **Step 5: 통과 확인.** → 7 passed.
+- [ ] **Step 6: 커밋.**
+
+### Task 8: 모델 비교와 결정 기록
+
+**Files:**
+- Create: `src/wl_snatch/compare.py`, `scripts/compare_detectors.py`, `docs/decisions/0003-detector-baseline.md`
+- Test: `tests/test_compare.py`
+
+**Interfaces:**
+- Consumes: `DetectorConfig`, `evaluate_detections`, `DetectionMetrics`.
+- Produces:
+  - `ComparisonRow(model_name: str, seed: int, imgsz: int, conf: float, iou_threshold: float, metrics: DetectionMetrics)`
+  - `write_comparison_csv(rows: list[ComparisonRow], path: Path) -> None`
+  - `assert_single_axis(rows: list[ComparisonRow]) -> None` — `model_name`을 제외한 조건(seed, imgsz, conf, iou_threshold)이 모든 행에서 같지 않으면 `ValueError`.
+
+- [ ] **Step 1: 실패하는 테스트 작성.**
+  - `test_rows_with_different_seed_are_rejected`
+  - `test_rows_differing_only_by_model_are_accepted`
+  - `test_csv_contains_one_row_per_model_with_metrics`
+  - `test_csv_writes_na_counts_and_none_metrics_as_empty`
+- [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_compare.py -v` → FAIL.
+- [ ] **Step 3: 구현.**
+- [ ] **Step 4: 통과 확인.** → 4 passed.
+- [ ] **Step 5: YOLO26 기준선 실행.** `scripts/train_detector.py`로 YOLO26을 학습하고 Task 4의 `validation` 사람들의 영상에서 `scripts/run_detector.py`와 평가기를 돌린다. M2 8GB에서 메모리 때문에 실패하면 `imgsz`나 배치를 줄이고 그 사실을 기록한다.
+- [ ] **Step 6: YOLO11, YOLOv8 비교 실행.** 모델만 바꾸고 나머지는 같게 한다. `scripts/compare_detectors.py`가 `assert_single_axis`를 먼저 호출한다.
+- [ ] **Step 7: 결정 기록.** `docs/decisions/0003-detector-baseline.md`에 비교 표, 조건, seed, 실패 사례(오탐 중심), `N/A` 개수를 적는다. 해석은 측정값 범위에서만 쓴다.
+- [ ] **Step 8: 커밋.**
+
+### Task 9: 노트북 위생 검사와 입문 튜토리얼
+
+**Files:**
+- Create: `tests/test_notebook_hygiene.py`, `tutorials/01_detection_quickstart.py`, `tutorials/01_detection_quickstart.ipynb`
+
+**Interfaces:**
+- Consumes: `detect_video`, `load_ultralytics_model`, `DetectorConfig`, `read_detections_csv`.
+
+- [ ] **Step 1: 실패하는 테스트 작성** `tests/test_notebook_hygiene.py`. `tutorials/`와 저장소의 모든 `.ipynb`에 대해 다음을 확인한다.
+  - `test_no_function_or_class_definitions_in_notebooks`: 코드 셀에 `def`, `class`, `lambda`가 없다.
+  - `test_no_test_or_assert_code_in_notebooks`: `assert`, `unittest`, `pytest` 문자열이 없다.
+  - `test_notebook_code_cells_are_short`: 한 셀 15줄 이하.
+  - `test_notebooks_have_no_stored_outputs`: 저장된 출력이 없다.
+  - `test_test_suite_never_executes_notebooks`: `tests/` 아래 파일이 `nbconvert`, `nbclient`, `ExecutePreprocessor`를 가져오지 않는다.
+- [ ] **Step 2: 실패 확인.** 노트북이 없는 상태에서는 통과하므로, 튜토리얼 노트북 추가 전에 일부러 `def`가 든 임시 노트북으로 실패를 한 번 확인하고 지운다.
+- [ ] **Step 3: 튜토리얼 작성.** `.py`는 "설정 → 영상 하나에 탐지 → 박스 그리기 → 결과 읽기" 순서로 `src/`를 불러 쓰기만 한다. 노트북은 같은 흐름을 셀로 나눈 얇은 버전이고, 설명은 마크다운 셀에 적는다.
+- [ ] **Step 4: 통과 확인.** Run: `uv run pytest tests/test_notebook_hygiene.py -v` → 5 passed.
+- [ ] **Step 5: 전체 실행.** Run: `uv run pytest -v` → 전부 통과. Run: `uv run python tutorials/01_detection_quickstart.py` → 영상 하나에서 박스가 그려진 이미지가 저장된다.
+- [ ] **Step 6: 커밋.**
