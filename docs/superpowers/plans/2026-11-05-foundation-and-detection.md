@@ -61,7 +61,7 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 - [ ] **Step 3: 실패 확인.** Run: `uv run pytest tests/test_scaffold.py -v` → FAIL (패키지 없음).
 - [ ] **Step 4: 뼈대 작성.** `pyproject.toml`은 setuptools src 레이아웃, 패키지명 `wl_snatch`, spec 9절의 라이브러리와 dev 그룹(pytest, jupyterlab). `.gitignore`는 `data/*`(단 `data/README.md` 제외), `*.pt`, `artifacts/`, `.env`, `.venv/`, 노트북 체크포인트를 제외한다. `docs/vision.md`에는 spec 1·2·4절을 옮겨 쓰고 **표현 규칙**(근거 전에 판정 금지, 비유 금지, 측정값과 `N/A`+사유 중심)을 별도 절로 둔다. `docs/roadmap.md`는 G2~G7의 순서와 의존성만 적고 CI를 "첫 PR 이후"로 적는다. `docs/literature/README.md`에는 이 대화에서 찾은 문헌과 URL을 옮기고, 각 항목에 "초록 기준, 원문 미확인" 표기를 붙인다. PR 템플릿에는 표현 규칙 체크박스, "노트북에 로직 없음" 체크박스, 리뷰어가 확인할 단계 간 약속 항목을 넣는다.
 - [ ] **Step 5: 통과 확인.** Run: `uv run pytest tests/test_scaffold.py -v` → 3 passed.
-- [ ] **Step 6: 커밋.** `main`에 커밋이 아직 없다. 동료의 요청으로 사용자(fabxoe)가 초기 프레임을 만드는 중이므로, `main`의 첫 부트스트랩 커밋은 **사용자가 예외로 직접 올린다.** (에이전트는 `main`에 커밋하거나 push하지 않는다.) 사용자가 `main`을 올린 것을 확인한 뒤, 브랜치 `feature/scaffold`에서 커밋하고 PR을 올린다. 그때까지는 변경을 커밋하지 않고 작업 트리에 둔다.
+- [ ] **Step 6: 커밋.** `main`의 부트스트랩 커밋(`d71a0fe`)은 사용자의 허락으로 이미 올라갔다. 이후 모든 작업은 브랜치 `feature/scaffold`에서 커밋하고, `main`에는 직접 커밋하거나 push하지 않는다. `.gitignore`에 `.superpowers/`와 `.claude/worktrees/`도 추가한다.
 
 ### Task 2: 단계 간 약속 `contracts.py`
 
@@ -193,6 +193,36 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 - [ ] **Step 4: 통과 확인.** → 7 passed.
 - [ ] **Step 5: 커밋.**
 
+### Task 6b: 분할 기준 데이터셋과 정답 로더 (사전 점검에서 추가)
+
+**Files:**
+- Create: `src/wl_snatch/dataset.py`, `scripts/build_plate_dataset.py`
+- Test: `tests/test_dataset.py`
+
+**Interfaces:**
+- Consumes: `make_person_split` 결과(Task 4), `GroundTruthFrame`(Task 6).
+- Produces:
+  - `parse_frame_name(name: str) -> tuple[str, int]` — `c02_sn_f_01_frame_0109.jpg` → `("c02_sn_f_01", 109)`. 형식이 다르면 `ValueError`.
+  - `build_yolo_dataset(image_dirs: list[Path], label_dirs: list[Path], split: pd.DataFrame, out_dir: Path) -> Path` — 라벨된 프레임을 새 사람 단위 분할(`role`)에 따라 `out_dir/images|labels/{train,validation}`로 복사하고, 상대경로 `dataset.yaml`(`names: {0: plate}`)을 쓴 뒤 그 경로를 돌려준다. 분할에 없는 영상의 프레임은 복사하지 않고 개수를 반환 로그에 남긴다. 같은 파일명이 두 폴더에 있으면 `ValueError`.
+  - `load_ground_truth(images_dir: Path, labels_dir: Path) -> list[GroundTruthFrame]` — YOLO 정규화 좌표를 이미지 크기로 곱해 픽셀 좌표로 바꾼다.
+
+**이유:** 아카이브의 `images/train|validation`은 옛 분할이다. 새 사람 단위 분할과 섞이면 같은 사람이 양쪽에 들어가 평가가 무효가 된다. 평가는 정답 박스가 있는 라벨된 프레임에서만 한다. 원판 없는 프레임(음성)이 데이터에 없으면 그 개수 0을 보고서에 명시하고, 오탐은 라벨된 프레임의 정답 밖 박스로만 센다.
+
+- [ ] **Step 1: 실패하는 테스트 작성.**
+  - `test_parse_frame_name_extracts_video_id_and_index`
+  - `test_parse_frame_name_rejects_unexpected_format`
+  - `test_build_dataset_places_frames_by_person_role`
+  - `test_build_dataset_writes_relative_dataset_yaml`
+  - `test_build_dataset_skips_frames_of_unsplit_videos_and_reports_count`
+  - `test_build_dataset_rejects_duplicate_filename_across_dirs`
+  - `test_no_person_appears_in_both_train_and_validation_folders`
+  - `test_load_ground_truth_converts_normalized_to_pixels`
+- [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_dataset.py -v` → FAIL.
+- [ ] **Step 3: 구현.**
+- [ ] **Step 4: 통과 확인.** → 8 passed.
+- [ ] **Step 5: 실제 실행.** `plate_dataset`과 `plate_dataset_v2`의 이미지·라벨을 합쳐 `data/plate_dataset_split/`를 만든다. 사람 누수 검사를 통과해야 한다. (Checkpoint에서 재라벨링이 정해졌다면 그 라벨을 쓴다.)
+- [ ] **Step 6: 커밋.**
+
 ### Task 7: 탐지기와 설정
 
 **Files:**
@@ -204,6 +234,7 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
   - `DetectorConfig(model_name: str, imgsz: int = 640, conf: float = 0.25, device: str = "auto", seed: int = 0, epochs: int = 50)` frozen dataclass. `imgsz`, `epochs`가 0 이하이거나 `conf`가 0~1 밖이면 `ValueError`.
   - `resolve_device(requested: str, mps_available: bool, cuda_available: bool) -> tuple[str, str | None]` — 사용할 장치와, 요청과 다를 때의 사유.
   - `detect_video(video_path: Path, video_id: str, model: Callable, config: DetectorConfig) -> list[FrameDetections]` — `model`은 프레임을 받아 박스 목록을 돌려주는 호출 가능 객체이므로 테스트에서 가짜로 바꿀 수 있다. 읽을 수 없는 영상은 `na_reason="video_unreadable"`인 프레임 하나를 돌려준다.
+  - `detect_images(image_paths: list[Path], model: Callable, config: DetectorConfig) -> list[FrameDetections]` — 파일명을 `parse_frame_name`(Task 6b)으로 해석해 `video_id`, `frame_index`를 채운다. 읽을 수 없는 이미지는 `na_reason="image_unreadable"`. (평가는 영상이 아니라 라벨된 프레임 이미지에서 한다.)
   - `load_ultralytics_model(config: DetectorConfig) -> Callable` — Ultralytics를 감싼다. 가중치 이름은 Step 1에서 확인한 값을 쓴다.
 
 - [ ] **Step 1: 가중치 이름 확인.** 공식 문서로 YOLO26, YOLO11, YOLOv8 nano 계열의 정확한 가중치 이름을 확인해 `docs/decisions/0001-environment.md`에 추가한다. 학습은 `dataset.yaml`의 `plate` 단일 클래스로 파인튜닝한다.
@@ -214,10 +245,12 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
   - `test_resolve_device_unavailable_returns_cpu_with_reason`
   - `test_auto_prefers_mps_then_cuda_then_cpu`
   - `test_detect_video_uses_injected_model_for_every_frame`
+  - `test_detect_images_fills_video_id_and_frame_index_from_filename`
+  - `test_unreadable_image_gives_na_frame_with_reason`
   - `test_unreadable_video_gives_na_frame_with_reason`
 - [ ] **Step 3: 실패 확인.** Run: `uv run pytest tests/test_config.py tests/test_detector.py -v` → FAIL.
 - [ ] **Step 4: 구현.** 가짜 모델로 테스트가 통과하게 한 뒤 `load_ultralytics_model`을 붙인다.
-- [ ] **Step 5: 통과 확인.** → 7 passed.
+- [ ] **Step 5: 통과 확인.** → 9 passed.
 - [ ] **Step 6: 커밋.**
 
 ### Task 8: 모델 비교와 결정 기록
@@ -241,7 +274,7 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 - [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_compare.py -v` → FAIL.
 - [ ] **Step 3: 구현.**
 - [ ] **Step 4: 통과 확인.** → 4 passed.
-- [ ] **Step 5: YOLO26 기준선 실행.** `scripts/train_detector.py`로 YOLO26을 학습하고 Task 4의 `validation` 사람들의 영상에서 `scripts/run_detector.py`와 평가기를 돌린다. M2 8GB에서 메모리 때문에 실패하면 `imgsz`나 배치를 줄이고 그 사실을 기록한다.
+- [ ] **Step 5: YOLO26 기준선 실행.** `scripts/train_detector.py`로 YOLO26을 `data/plate_dataset_split/`(Task 6b)의 train으로 학습하고, validation 이미지에서 `detect_images`와 `load_ground_truth`, 평가기를 돌린다. M2 8GB에서 메모리 때문에 실패하면 `imgsz`나 배치를 줄이고 그 사실을 기록한다.
 - [ ] **Step 6: YOLO11, YOLOv8 비교 실행.** 모델만 바꾸고 나머지는 같게 한다. `scripts/compare_detectors.py`가 `assert_single_axis`를 먼저 호출한다.
 - [ ] **Step 7: 결정 기록.** `docs/decisions/0003-detector-baseline.md`에 비교 표, 조건, seed, 실패 사례(오탐 중심), `N/A` 개수를 적는다. 해석은 측정값 범위에서만 쓴다.
 - [ ] **Step 8: 커밋.**
