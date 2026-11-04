@@ -121,6 +121,77 @@ def test_describe_and_overlap():
     assert filename_overlap(["a", "b"], ["b", "c"]) == ["b"]
 
 
+def test_summarize_excludes_boxes_the_audit_rejects(tmp_path):
+    from wl_snatch.label_audit import summarize_directory
+
+    img, lbl = make(
+        tmp_path,
+        {
+            "a.jpg": "0 1.2 0.5 0.2 0.2\n0 0.5 0.5 0.1 0.1\nbroken line\n",
+            "b.jpg": "0 0.5 0.5 0.3 0.3\n",
+        },
+    )
+    s = summarize_directory(img, lbl, frozenset({0}))
+    assert s["labeled_boxes"] == 2
+    assert s["boxes_per_image_histogram"] == {"1": 2}
+    assert s["box_width_normalized"] == {"min": 0.1, "median": 0.2, "max": 0.3}
+    assert s["issues_by_kind"]["out_of_range"] == 2
+
+
+def test_read_boxes_uses_the_audit_validator(tmp_path):
+    p = tmp_path / "a.txt"
+    p.write_text("0 1.2 0.5 0.2 0.2\n0 0.5 0.5 0 0.2\n0 0.05 0.5 0.4 0.2\n3 0.5 0.5 0.2 0.2\n")
+    assert read_boxes(p) == [(3, 0.5, 0.5, 0.2, 0.2)]
+    assert read_boxes(p, frozenset({0})) == []
+
+
+def test_detail_starts_with_fixed_tag(tmp_path):
+    img, lbl = make(
+        tmp_path,
+        {
+            "a.jpg": "0 0.5 0.5 0.2\n",
+            "b.jpg": "0 1.2 0.5 0.2 0.2\n",
+            "c.jpg": None,
+        },
+    )
+    (lbl / "c.txt").write_bytes(b"\xff\xfe\x00bad")
+    details = {i.image: i.detail for i in audit_yolo_labels(img, lbl, frozenset({0})).issues}
+    assert details["a.jpg"].startswith("malformed:")
+    assert details["b.jpg"].startswith("out_of_range:")
+    assert details["c.jpg"].startswith("unreadable:")
+
+
+def test_uppercase_extensions_for_images_and_labels(tmp_path):
+    img, lbl = make(tmp_path, {"a.JPEG": None, "b.PNG": None})
+    (lbl / "a.TXT").write_text(OK)
+    (lbl / "b.txt").write_text(OK)
+    (lbl / "orphan.TXT").write_text(OK)
+    report = audit_yolo_labels(img, lbl, frozenset({0}))
+    assert report.images == 2 and report.labeled_boxes == 2
+    assert [(i.kind, i.image) for i in report.issues] == [("orphan_label", "orphan.TXT")]
+
+
+def test_directory_named_like_label_is_not_a_label(tmp_path):
+    img, lbl = make(tmp_path, {"a.jpg": None})
+    (lbl / "a.txt").mkdir()
+    report = audit_yolo_labels(img, lbl, frozenset({0}))
+    assert kinds(report) == ["missing_label"]
+    assert report.labeled_boxes == 0
+
+
+def test_duplicate_boxes_count_toward_labeled_boxes_and_need_exact_values(tmp_path):
+    img, lbl = make(tmp_path, {"a.jpg": OK + "0 0.5 0.5 0.2 0.2000001\n"})
+    report = audit_yolo_labels(img, lbl, frozenset({0}))
+    assert report.issues == ()
+    assert report.labeled_boxes == 2
+
+
+def test_plate_pairs_is_defined_once_in_the_library():
+    from wl_snatch.label_audit import PLATE_PAIRS
+
+    assert set(PLATE_PAIRS) == {"plate_dataset", "plate_dataset_v2/train", "plate_dataset_v2/validation"}
+
+
 def test_summarize_directory_counts(tmp_path):
     from wl_snatch.label_audit import summarize_directory
 

@@ -4,16 +4,13 @@ import argparse
 import json
 from pathlib import Path
 
-from wl_snatch.label_audit import ISSUE_KINDS, filename_overlap, list_images, summarize_directory
-
-PAIRS = {
-    "plate_dataset": ("plate_dataset/images", "plate_dataset/labels"),
-    "plate_dataset_v2/train": ("plate_dataset_v2/images/train", "plate_dataset_v2/labels/train"),
-    "plate_dataset_v2/validation": (
-        "plate_dataset_v2/images/validation",
-        "plate_dataset_v2/labels/validation",
-    ),
-}
+from wl_snatch.label_audit import (
+    ISSUE_KINDS,
+    PLATE_PAIRS as PAIRS,
+    filename_overlap,
+    list_images,
+    summarize_directory,
+)
 
 
 def _fmt(d: dict) -> str:

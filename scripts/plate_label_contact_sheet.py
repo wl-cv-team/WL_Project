@@ -5,17 +5,8 @@ from pathlib import Path
 
 import cv2
 
-from wl_snatch.contact_sheet import draw_yolo_boxes, label_image, tile_images
-from wl_snatch.label_audit import list_images, read_boxes
-
-PAIRS = {
-    "plate_dataset": ("plate_dataset/images", "plate_dataset/labels"),
-    "plate_dataset_v2_train": ("plate_dataset_v2/images/train", "plate_dataset_v2/labels/train"),
-    "plate_dataset_v2_validation": (
-        "plate_dataset_v2/images/validation",
-        "plate_dataset_v2/labels/validation",
-    ),
-}
+from wl_snatch.contact_sheet import render_cell, tile_images
+from wl_snatch.label_audit import PLATE_PAIRS, label_files, list_images, read_boxes
 
 
 def main() -> None:
@@ -24,24 +15,32 @@ def main() -> None:
     parser.add_argument("--out-dir", type=Path, default=Path("artifacts/label_audit"))
     parser.add_argument("--per-sheet", type=int, default=24)
     parser.add_argument("--columns", type=int, default=6)
+    parser.add_argument("--cell-width", type=int, default=270)
+    parser.add_argument("--cell-height", type=int, default=480)
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    cell = (args.cell_width, args.cell_height)
 
-    for name, (img_rel, lbl_rel) in PAIRS.items():
+    for pair_name, (img_rel, lbl_rel) in PLATE_PAIRS.items():
+        name = pair_name.replace("/", "_")
         images = list_images(args.data_dir / img_rel)
-        tiles, unreadable = [], []
-        for path in images:
-            frame = cv2.imread(str(path))
-            if frame is None:
-                unreadable.append(path.name)
+        labels = label_files(args.data_dir / lbl_rel)
+        sheets, unreadable = 0, []
+        for start in range(0, len(images), args.per_sheet):
+            tiles = []
+            for path in images[start : start + args.per_sheet]:
+                frame = cv2.imread(str(path))
+                if frame is None:
+                    unreadable.append(path.name)
+                    continue
+                label = labels.get(path.stem)
+                boxes = read_boxes(label) if label is not None else []
+                tiles.append(render_cell(frame, boxes, cell, path.stem))
+                del frame
+            if not tiles:
                 continue
-            boxes = read_boxes(args.data_dir / lbl_rel / f"{path.stem}.txt")
-            tiles.append(label_image(draw_yolo_boxes(frame, boxes), path.stem[-28:]))
-        sheets = 0
-        for start in range(0, len(tiles), args.per_sheet):
-            sheet = tile_images(tiles[start : start + args.per_sheet], args.columns)
             out = args.out_dir / f"contact_{name}_{start // args.per_sheet + 1:02d}.png"
-            cv2.imwrite(str(out), sheet)
+            cv2.imwrite(str(out), tile_images(tiles, args.columns, cell))
             sheets += 1
             print(f"wrote {out}")
         print(f"{name}: images={len(images)} sheets={sheets} unreadable={unreadable}")
