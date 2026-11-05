@@ -1,6 +1,16 @@
 # data/
 
-이 디렉터리의 내용은 git에서 제외됩니다. 추적하는 파일은 이 README와 `data/metadata/videos.csv` 두 개뿐입니다. 영상에 사람이 찍혀 있으므로 외부 공유는 사전 승인을 받습니다.
+영상에 사람 얼굴이 나오므로 영상과, 영상에서 뽑은 이미지(jpg, png 등)는 git에 올리지 않습니다. 외부 공유는 사전 승인을 받습니다. 영상과 이미지는 팀 Google Drive "영상 공유" 폴더로 공유합니다.
+
+git이 추적하는 것은 이 README와 아래 세 폴더의 표와 텍스트 파일입니다. 목록에 없는 폴더와 파일은 추적하지 않습니다.
+
+| 폴더 | 내용 |
+|---|---|
+| `metadata/` | `videos.csv`(영상 목록, `near_side` 입력) |
+| `annotations/` | 라벨 표와 텍스트 라벨 |
+| `splits/` | 사람 단위 분할 표 |
+
+`raw/`, `plate_dataset/`, `plate_dataset_v2/`는 추적하지 않습니다. `annotations/`와 `splits/`에 있는 `phase_events.csv`, `pilot_frame_ground_truth.csv`, `u11_task3_plate_identity_labels/`, `evaluation_videos.csv`는 아카이브에서 가져온 파일입니다. 기존 라벨은 사용하지 않기로 했고(`docs/decisions/0002`), 새 라벨로 대체될 때까지 보관만 합니다.
 
 - 원본 영상은 수정하지 않습니다. 파생 데이터는 별도로 저장합니다.
 - 영상 선택과 split의 기준은 `data/metadata/videos.csv`입니다. 그룹, 사람 ID, 수준, 반복 정보는 폴더 이동이 아니라 manifest 열로 관리합니다.

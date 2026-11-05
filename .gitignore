@@ -1,10 +1,18 @@
 # 데이터 (영상에 사람이 찍혀 있음). README만 추적한다.
 data/*
 !data/README.md
-# 손으로 입력하는 영상 메타데이터(near_side 등)는 팀이 함께 쓰므로 추적한다. 영상 파일은 추적하지 않는다.
+# 표와 라벨 텍스트(메타데이터, 어노테이션, 분할)는 팀이 같은 값을 쓰도록 추적한다.
 !data/metadata/
-data/metadata/*
-!data/metadata/videos.csv
+!data/annotations/
+!data/splits/
+# 영상과 영상에서 뽑은 이미지에는 얼굴이 나오므로 어느 폴더에 있어도 추적하지 않는다.
+data/**/*.mp4
+data/**/*.mov
+data/**/*.avi
+data/**/*.mkv
+data/**/*.jpg
+data/**/*.jpeg
+data/**/*.png
 
 # 모델 가중치, 산출물
 *.pt
