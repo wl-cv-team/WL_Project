@@ -5,7 +5,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from wl_snatch.label_viewer import Overlay, draw_overlay, flag_box_issues, render_label_frame
+from wl_snatch.label_viewer import (
+    BOX_COLOR_BGR,
+    Overlay,
+    draw_overlay,
+    flag_box_issues,
+    render_label_frame,
+)
 
 
 def blank(h: int = 100, w: int = 200) -> np.ndarray:
@@ -24,9 +30,33 @@ def test_draw_overlay_changes_pixels_at_box_edge():
     frame = blank()
     # box spans x 60..140, y 30..70 in pixels
     result = draw_overlay(frame, Overlay(boxes=((0.5, 0.5, 0.4, 0.4),), skipped=()))
-    assert result[50, 60:62].any()
-    assert result[30:32, 100].any()
-    assert not result[50, 100].any()  # interior is unchanged
+    color = np.array(BOX_COLOR_BGR)
+    for y, x in [(50, 60), (50, 140), (30, 100), (70, 100)]:
+        assert np.array_equal(result[y, x], color)
+    for y, x in [(50, 59), (50, 141), (29, 100), (71, 100)]:  # one step outside
+        assert np.array_equal(result[y, x], frame[y, x])
+    for y, x in [(50, 61), (50, 139), (31, 100), (69, 100)]:  # one step inside
+        assert np.array_equal(result[y, x], frame[y, x])
+
+
+def test_draw_overlay_rounds_non_integer_corners():
+    # x edges at 59.7 and 140.3 pixels -> 60 and 140
+    result = draw_overlay(blank(), Overlay(boxes=((0.5, 0.5, 0.403, 0.4),), skipped=()))
+    color = np.array(BOX_COLOR_BGR)
+    assert np.array_equal(result[50, 60], color)
+    assert np.array_equal(result[50, 140], color)
+    assert not result[50, 59].any()
+    assert not result[50, 141].any()
+
+
+def test_draw_overlay_box_clipped_by_frame_edge_draws_in_frame_edges():
+    # x spans 150..230 (frame width 200), y spans 30..70
+    result = draw_overlay(blank(), Overlay(boxes=((0.95, 0.5, 0.4, 0.4),), skipped=()))
+    color = np.array(BOX_COLOR_BGR)
+    assert np.array_equal(result[50, 150], color)  # left edge, inside the frame
+    assert np.array_equal(result[30, 199], color)  # top edge reaches the frame border
+    assert np.array_equal(result[70, 199], color)
+    assert not result[50, 151].any()
 
 
 def test_draw_overlay_empty_boxes_returns_equal_copy():
@@ -45,7 +75,17 @@ def test_draw_overlay_box_partly_outside_frame_does_not_raise():
 def test_flag_box_issues_flags_width_0_024_height_0_0047():
     issues = flag_box_issues(((0.5, 0.5, 0.024, 0.0047),))
     assert len(issues) == 1
+    assert "height" in issues[0]
     assert "0.0047" in issues[0]
+    assert "width" not in issues[0]
+
+
+def test_flag_box_issues_boundary_values():
+    assert flag_box_issues(((0.5, 0.5, 0.02, 0.9),)) == []
+    below = flag_box_issues(((0.5, 0.5, 0.0199, 0.5),))
+    assert len(below) == 1 and "width" in below[0]
+    above = flag_box_issues(((0.5, 0.5, 0.5, 0.9001),))
+    assert len(above) == 1 and "height" in above[0]
 
 
 def test_flag_box_issues_passes_normal_plate_box():

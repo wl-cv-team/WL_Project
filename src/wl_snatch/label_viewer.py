@@ -20,7 +20,7 @@ from wl_snatch.frames import read_frame
 
 NormBox = tuple[float, float, float, float]  # cx, cy, w, h, normalized to 0..1
 BOX_COLOR_BGR = (0, 255, 0)
-BOX_THICKNESS = 2
+BOX_THICKNESS = 1
 
 
 @dataclass(frozen=True)
@@ -38,14 +38,12 @@ def flag_box_issues(
 ) -> list[str]:
     """Descriptions of boxes with a side below `min_side` or above `max_side` (normalized units)."""
     issues: list[str] = []
-    for number, (cx, cy, w, h) in enumerate(boxes):
-        reasons = []
-        if min(w, h) < min_side:
-            reasons.append(f"a side is below {min_side:g}")
-        if max(w, h) > max_side:
-            reasons.append(f"a side is above {max_side:g}")
-        if reasons:
-            issues.append(f"box {number}: w={w:.4g}, h={h:.4g}: " + "; ".join(reasons))
+    for number, (_, _, w, h) in enumerate(boxes):
+        for side_name, value in (("width", w), ("height", h)):
+            if value < min_side:
+                issues.append(f"box {number}: {side_name} {value:.4g} is below min_side {min_side:g}")
+            elif value > max_side:
+                issues.append(f"box {number}: {side_name} {value:.4g} is above max_side {max_side:g}")
     return issues
 
 

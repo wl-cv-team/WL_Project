@@ -21,5 +21,11 @@ def write_video(path: Path, colors=COLORS, size=(64, 48), fps=10.0) -> Path:
 
 
 @pytest.fixture
+def dominant_channels() -> list[int]:
+    """Dominant BGR channel index of each frame made by `make_video` with default colors."""
+    return list(DOMINANT)
+
+
+@pytest.fixture
 def make_video() -> Callable[..., Path]:
     return write_video

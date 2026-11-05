@@ -75,5 +75,10 @@ def frame_times_ms(video_path: Path) -> list[float]:
         capture.release()
     if not times:
         return []
+    if len(times) > 1 and len(set(times)) == 1:
+        raise ValueError(
+            f"{Path(video_path).name}: timestamps unavailable "
+            f"(all {len(times)} frames report {times[0]} ms)"
+        )
     start = times[0]
     return [t - start for t in times]
