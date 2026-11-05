@@ -52,3 +52,52 @@ def test_valid_manifest_loads_with_string_ids(tmp_path: Path):
     df = load_manifest(path)
     assert list(df["person_id"]) == ["001", "002"]
     assert len(df) == 2
+
+
+# --- near_side (issue #7) ---------------------------------------------------
+
+from wl_snatch.manifest import NEAR_SIDE_VALUES, require_near_side  # noqa: E402
+
+NEAR_HEADER = HEADER.strip() + ",near_side\n"
+
+
+def test_near_side_values_are_left_and_right():
+    assert NEAR_SIDE_VALUES == ("left", "right")
+
+
+def test_load_accepts_blank_near_side_before_it_is_filled(tmp_path: Path):
+    path = _write(tmp_path, "v1,a01,A,p,yes,ok,\n", header=NEAR_HEADER)
+    assert list(load_manifest(path)["near_side"]) == [""]
+
+
+def test_load_rejects_value_other_than_left_right_or_blank(tmp_path: Path):
+    path = _write(tmp_path, "v1,a01,A,p,yes,ok,unknown\n", header=NEAR_HEADER)
+    with pytest.raises(ValueError, match="unknown"):
+        load_manifest(path)
+
+
+def test_load_rejects_wrong_case_near_side(tmp_path: Path):
+    path = _write(tmp_path, "v1,a01,A,p,yes,ok,Left\n", header=NEAR_HEADER)
+    with pytest.raises(ValueError, match="Left"):
+        load_manifest(path)
+
+
+def test_require_near_side_rejects_missing_column(tmp_path: Path):
+    df = load_manifest(_write(tmp_path, "v1,a01,A,p,yes,ok\n"))
+    with pytest.raises(ValueError, match="near_side"):
+        require_near_side(df)
+
+
+def test_require_near_side_names_videos_with_blank_value(tmp_path: Path):
+    body = "v1,a01,A,p,yes,ok,left\nv2,a02,A,p,yes,ok,\nv3,a03,A,p,yes,ok,right\n"
+    df = load_manifest(_write(tmp_path, body, header=NEAR_HEADER))
+    with pytest.raises(ValueError) as err:
+        require_near_side(df)
+    assert "v2" in str(err.value)
+    assert "v1" not in str(err.value)
+
+
+def test_require_near_side_passes_when_all_filled(tmp_path: Path):
+    body = "v1,a01,A,p,yes,ok,left\nv2,a02,A,p,yes,ok,right\n"
+    df = load_manifest(_write(tmp_path, body, header=NEAR_HEADER))
+    require_near_side(df)
