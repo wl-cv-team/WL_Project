@@ -40,6 +40,8 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 1. 아카이브 라벨 재사용 여부, 재라벨링 필요 시 담당자와 규모.
 2. TCN 적용 위치 승인 절차와 "시도했으나 효과 없음" 결과의 허용 여부. (이 계획은 TCN을 구현하지 않으므로 기록만 한다.)
 
+**2026-11-06 결과:** `0002`에 기록되었다. 기존 라벨은 쓰지 않고 새로 라벨링한다. baseline 숫자를 내는 실행(Task 6 이후의 실행 단계)은 새 라벨이 나온 뒤로 미루고, 코드와 형식 준비는 합성 데이터로 테스트하며 진행한다. 새 라벨 전까지 Task 6b의 "실제 실행"(Step 5)과 Task 8의 모델 비교 실행은 하지 않는다.
+
 ---
 
 ### Task 1: 저장소 뼈대와 문서 기본
@@ -164,6 +166,51 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 - [ ] **Step 4: 통과 확인.** → 7 passed.
 - [ ] **Step 5: 실제 점검.** `plate_dataset`(30장)과 `plate_dataset_v2`(150장)에 실행해 `artifacts/label_audit/`에 보고서를 저장한다. `plate_label_contact_sheet.py`로 박스를 그린 이미지 모음을 만들어, 사람이 눈으로 확인할 수 있게 한다.
 - [ ] **Step 6: 커밋.** 이후 **Checkpoint**로 간다.
+
+### Task 5b: 프레임 읽기와 라벨 확인 뷰어 (이슈 #11, #10 반영)
+
+**배경:** 얼굴이 담긴 이미지는 저장소에 올리지 않는다(#11). 라벨은 좌표와 프레임 번호만 git에 있고, 확인은 로컬 영상에서 프레임을 메모리로 읽어 화면에만 그린다. 노트북은 이 함수를 호출만 한다. 새 라벨 형식(#2, #8, #9)과 프레임 번호 기준(#10)은 팀 결정 전이므로 아래 값은 **잠정**이다.
+
+**사전 측정(2026-11-06, 읽기 전용, 영상 54개):**
+- OpenCV `CAP_PROP_FRAME_COUNT`와 순차 디코딩으로 센 프레임 수가 49개 영상에서 다르다(컨테이너 값이 더 큼). `videos.csv`의 `frame_count`는 디코딩 수와 같다(샘플 6개).
+- 타임스탬프 간격은 52개 영상에서 일정(24, 30, 60fps). `a05_sn_f_01`(최소 간격 8.7ms)과 `b00_sn_f_01`(5.0~18.3ms)은 불규칙. `c01_sn_f_02`, `c04_sn_f_03`은 첫 프레임 시각이 66.7ms.
+- `videos.csv`의 `fps`는 프레임 수를 컨테이너 재생 길이로 나눈 값으로 추정되며(미확인) 실제 간격과 다르다(예: 27.26 대 30).
+
+**Files:**
+- Create: `src/wl_snatch/frames.py`, `src/wl_snatch/label_viewer.py`
+- Test: `tests/test_frames.py`, `tests/test_label_viewer.py`
+- 재사용: `contact_sheet.py`의 `letterbox`, `_draw_label`
+
+**Interfaces:**
+- Produces (`frames.py`):
+  - `read_frame(video_path: Path, frame_index: int) -> np.ndarray`: 처음부터 순차 디코딩해 `frame_index`번째(0부터) 프레임을 반환한다. 탐색(seek)을 쓰지 않는다. 읽을 수 없거나 범위를 벗어나면 영상 이름과 번호를 담은 `ValueError`.
+  - `count_frames(video_path: Path) -> int`: 순차 디코딩으로 센 프레임 수. 컨테이너 메타데이터 값은 쓰지 않는다.
+  - `frame_times_ms(video_path: Path) -> list[float]`: 디코딩한 프레임마다 타임스탬프(ms). 시간 계산은 `videos.csv`의 `fps` 열이 아니라 이 값을 쓴다.
+- Produces (`label_viewer.py`):
+  - `Overlay(boxes: list[tuple[float, float, float, float]], points: dict[str, tuple[float, float]], tags: list[str])` frozen dataclass. 좌표는 0~1로 정규화한 값(cx, cy, w, h 또는 x, y).
+  - `flag_box_issues(boxes, min_side: float = 0.02) -> list[str]`: 한 변이 `min_side`보다 작은 박스에 대한 설명.
+  - `draw_overlay(frame: np.ndarray, overlay: Overlay) -> np.ndarray`: 입력을 바꾸지 않고 복사본에 그린다.
+  - `show_frame(video_path: Path, frame_index: int, overlay: Overlay) -> None`: matplotlib으로 화면에만 표시하고 어떤 파일도 만들지 않는다.
+
+- [ ] **Step 1: 실패하는 테스트 작성** (OpenCV로 임시 폴더에 프레임마다 색이 다른 5프레임 영상을 만든다).
+  - `test_read_frame_returns_requested_index`
+  - `test_read_frame_out_of_range_raises_value_error_with_name_and_index`
+  - `test_read_frame_missing_video_raises_value_error`
+  - `test_count_frames_matches_decoded_frames`
+  - `test_frame_times_have_one_entry_per_frame`
+  - `test_draw_overlay_does_not_modify_input`
+  - `test_draw_overlay_changes_pixels_at_box_edge`
+  - `test_flag_box_issues_flags_width_0_024_height_0_0047`
+  - `test_flag_box_issues_passes_normal_plate_box`
+  - `test_show_frame_creates_no_image_file` (작업 폴더와 임시 폴더에 새 이미지 파일이 없음)
+- [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_frames.py tests/test_label_viewer.py -v` → FAIL.
+- [ ] **Step 3: 구현.** 프레임 읽기는 순차 디코딩. 그리기는 `letterbox`로 비율을 유지한다.
+- [ ] **Step 4: 통과 확인.**
+- [ ] **Step 5: 실제 확인.** 로컬 영상 54개에서 `count_frames`가 `videos.csv`의 `frame_count`와 같은지 비교해 표로 남긴다. 다르면 사유를 기록한다.
+- [ ] **Step 6: 커밋.**
+
+**이 Task에서 제외:** 점 라벨을 두 번 찍은 결과의 비교(#8, 라벨 형식 확정 후), 노트북(Task 9).
+**팀 결정 후 확정할 것:** 프레임 번호 기준과 VFR 처리(#10), 좌표 형식(#2, #8, #9).
 
 ### Task 6: 탐지 평가기
 
