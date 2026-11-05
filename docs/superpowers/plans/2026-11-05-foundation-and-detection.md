@@ -144,7 +144,7 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 ### Task 5: 아카이브 탐지 라벨 점검
 
 **Files:**
-- Create: `src/wl_snatch/label_audit.py`, `scripts/audit_plate_labels.py`, `scripts/plate_label_contact_sheet.py`
+- Create: `src/wl_snatch/label_audit.py`, `scripts/audit_plate_labels.py` (구현 당시에는 `scripts/plate_label_contact_sheet.py`와 `contact_sheet.py`도 만들었으나 이미지를 파일로 만드는 코드라 #11, #12에 따라 삭제했다)
 - Test: `tests/test_label_audit.py`
 
 **Interfaces:**
@@ -164,53 +164,92 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 - [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_label_audit.py -v` → FAIL.
 - [ ] **Step 3: 구현.** 라벨은 YOLO 형식(`class cx cy w h`, 0~1)으로 읽는다. 예외를 던지지 않고 `LabelIssue`로 담는다.
 - [ ] **Step 4: 통과 확인.** → 7 passed.
-- [ ] **Step 5: 실제 점검.** `plate_dataset`(30장)과 `plate_dataset_v2`(150장)에 실행해 `artifacts/label_audit/`에 보고서를 저장한다. `plate_label_contact_sheet.py`로 박스를 그린 이미지 모음을 만들어, 사람이 눈으로 확인할 수 있게 한다.
+- [ ] **Step 5: 실제 점검.** `plate_dataset`(30장)과 `plate_dataset_v2`(150장)에 실행해 `artifacts/label_audit/`에 보고서를 저장한다. (당시에는 컨택트 시트 이미지로 눈 확인을 했다. 이후 방식은 Task 5b의 뷰어로 대체한다.)
 - [ ] **Step 6: 커밋.** 이후 **Checkpoint**로 간다.
 
-### Task 5b: 프레임 읽기와 라벨 확인 뷰어 (이슈 #11, #10 반영)
+### Task 5b: 프레임 읽기와 라벨 확인 뷰어 — 박스 (이슈 #12, #11, #10 반영)
 
-**배경:** 얼굴이 담긴 이미지는 저장소에 올리지 않는다(#11). 라벨은 좌표와 프레임 번호만 git에 있고, 확인은 로컬 영상에서 프레임을 메모리로 읽어 화면에만 그린다. 노트북은 이 함수를 호출만 한다. 새 라벨 형식(#2, #8, #9)과 프레임 번호 기준(#10)은 팀 결정 전이므로 아래 값은 **잠정**이다.
+**배경:** 얼굴이 담긴 이미지는 저장소에 올리지 않고 파일로도 만들지 않는다(#11). 라벨은 좌표와 프레임 번호만 git에 있고, 확인은 로컬 영상에서 프레임을 메모리로 읽어 좌표를 그린 **배열**을 돌려받아 노트북이 화면에 표시한다(#12). 이 Task는 박스만 다룬다. 관절 점과 단계 점은 형식이 정해진 뒤(#8, #9) 같은 구조에 추가한다. 아래 값은 잠정이다.
 
 **사전 측정(2026-11-06, 읽기 전용, 영상 54개):**
-- OpenCV `CAP_PROP_FRAME_COUNT`와 순차 디코딩으로 센 프레임 수가 49개 영상에서 다르다(컨테이너 값이 더 큼). `videos.csv`의 `frame_count`는 디코딩 수와 같다(샘플 6개).
-- 타임스탬프 간격은 52개 영상에서 일정(24, 30, 60fps). `a05_sn_f_01`(최소 간격 8.7ms)과 `b00_sn_f_01`(5.0~18.3ms)은 불규칙. `c01_sn_f_02`, `c04_sn_f_03`은 첫 프레임 시각이 66.7ms.
-- `videos.csv`의 `fps`는 프레임 수를 컨테이너 재생 길이로 나눈 값으로 추정되며(미확인) 실제 간격과 다르다(예: 27.26 대 30).
+- OpenCV `CAP_PROP_FRAME_COUNT`와 순차 디코딩 수가 49개 영상에서 다르다(컨테이너 값이 큼). ffprobe `-count_frames`는 OpenCV 디코딩 수와 같다(6개 영상). `videos.csv`의 `frame_count`는 디코딩 수와 같다(샘플 6개).
+- 타임스탬프 간격은 52개 영상에서 일정(24, 30, 60fps). `a05_sn_f_01`은 처음 두 프레임 사이만 8.7ms. `b00_sn_f_01`은 5.0ms와 18.3ms가 하나씩. `c01_sn_f_02`, `c04_sn_f_03`은 첫 프레임이 66.7ms.
+- `videos.csv`의 `fps`는 평균값으로 추정되며 시간 계산에 쓰지 않는다.
+- 동료가 프레임 번호를 디코딩 순서(0부터)로 하자는 제안에 동의했다(#10).
 
 **Files:**
 - Create: `src/wl_snatch/frames.py`, `src/wl_snatch/label_viewer.py`
 - Test: `tests/test_frames.py`, `tests/test_label_viewer.py`
-- 재사용: `contact_sheet.py`의 `letterbox`, `_draw_label`
+- 재사용: `label_audit.read_boxes`(YOLO 라벨 읽기). 읽는 부분과 그리는 부분을 분리한다.
 
 **Interfaces:**
 - Produces (`frames.py`):
-  - `read_frame(video_path: Path, frame_index: int) -> np.ndarray`: 처음부터 순차 디코딩해 `frame_index`번째(0부터) 프레임을 반환한다. 탐색(seek)을 쓰지 않는다. 읽을 수 없거나 범위를 벗어나면 영상 이름과 번호를 담은 `ValueError`.
+  - `read_frame(video_path: Path, frame_index: int) -> np.ndarray`: 처음부터 순차 디코딩해 `frame_index`번째(0부터)를 반환한다. 탐색(seek)을 쓰지 않는다. 읽을 수 없거나 범위를 벗어나면 영상 이름과 번호가 담긴 `ValueError`. 조용히 다른 프레임을 반환하지 않는다.
   - `count_frames(video_path: Path) -> int`: 순차 디코딩으로 센 프레임 수. 컨테이너 메타데이터 값은 쓰지 않는다.
-  - `frame_times_ms(video_path: Path) -> list[float]`: 디코딩한 프레임마다 타임스탬프(ms). 시간 계산은 `videos.csv`의 `fps` 열이 아니라 이 값을 쓴다.
+  - `frame_times_ms(video_path: Path) -> list[float]`: 디코딩한 프레임마다의 시각(ms). 첫 프레임을 0으로 맞춘다(첫 프레임이 0이 아닌 영상이 있다).
 - Produces (`label_viewer.py`):
-  - `Overlay(boxes: list[tuple[float, float, float, float]], points: dict[str, tuple[float, float]], tags: list[str])` frozen dataclass. 좌표는 0~1로 정규화한 값(cx, cy, w, h 또는 x, y).
-  - `flag_box_issues(boxes, min_side: float = 0.02) -> list[str]`: 한 변이 `min_side`보다 작은 박스에 대한 설명.
-  - `draw_overlay(frame: np.ndarray, overlay: Overlay) -> np.ndarray`: 입력을 바꾸지 않고 복사본에 그린다.
-  - `show_frame(video_path: Path, frame_index: int, overlay: Overlay) -> None`: matplotlib으로 화면에만 표시하고 어떤 파일도 만들지 않는다.
+  - `Overlay(boxes: tuple[tuple[float, float, float, float], ...], skipped: tuple[str, ...])` frozen dataclass. 박스는 0~1로 정규화한 `cx, cy, w, h`. `skipped`는 좌표가 `N/A`라 건너뛴 항목의 사유.
+  - `flag_box_issues(boxes, min_side: float = 0.02, max_side: float = 0.9) -> list[str]`: 한 변이 `min_side`보다 작거나 `max_side`보다 큰 박스의 설명. 기준값은 인자로 바꾼다.
+  - `draw_overlay(frame: np.ndarray, overlay: Overlay) -> np.ndarray`: 입력을 바꾸지 않고 복사본에 박스를 그려 **배열을 돌려준다.**
+  - `render_label_frame(video_path: Path, frame_index: int, overlay: Overlay) -> tuple[np.ndarray, list[str]]`: 프레임을 읽어 그린 배열과 안내 문구(이상값 설명, 건너뛴 사유)를 돌려준다. 화면 표시와 파일 저장은 하지 않는다.
+- 이 모듈에는 이미지를 파일로 저장하는 함수를 두지 않는다. 화면 표시는 노트북이 한다.
 
-- [ ] **Step 1: 실패하는 테스트 작성** (OpenCV로 임시 폴더에 프레임마다 색이 다른 5프레임 영상을 만든다).
+- [ ] **Step 1: 실패하는 테스트 작성** (OpenCV로 임시 폴더에 프레임마다 색이 다른 5프레임 합성 영상을 만든다. 실제 사람이 나온 영상은 쓰지 않는다).
   - `test_read_frame_returns_requested_index`
   - `test_read_frame_out_of_range_raises_value_error_with_name_and_index`
   - `test_read_frame_missing_video_raises_value_error`
   - `test_count_frames_matches_decoded_frames`
-  - `test_frame_times_have_one_entry_per_frame`
+  - `test_frame_times_start_at_zero_and_have_one_entry_per_frame`
   - `test_draw_overlay_does_not_modify_input`
   - `test_draw_overlay_changes_pixels_at_box_edge`
   - `test_flag_box_issues_flags_width_0_024_height_0_0047`
   - `test_flag_box_issues_passes_normal_plate_box`
-  - `test_show_frame_creates_no_image_file` (작업 폴더와 임시 폴더에 새 이미지 파일이 없음)
+  - `test_flag_box_issues_threshold_is_configurable`
+  - `test_render_label_frame_reports_skipped_reasons`
+  - `test_no_image_file_is_written` (렌더링 후 작업 폴더와 임시 폴더에 새 파일이 없음)
 - [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_frames.py tests/test_label_viewer.py -v` → FAIL.
-- [ ] **Step 3: 구현.** 프레임 읽기는 순차 디코딩. 그리기는 `letterbox`로 비율을 유지한다.
+- [ ] **Step 3: 구현.** 프레임 읽기는 순차 디코딩.
 - [ ] **Step 4: 통과 확인.**
-- [ ] **Step 5: 실제 확인.** 로컬 영상 54개에서 `count_frames`가 `videos.csv`의 `frame_count`와 같은지 비교해 표로 남긴다. 다르면 사유를 기록한다.
+- [ ] **Step 5: 실제 확인.** 로컬 영상 54개에서 `count_frames`가 `videos.csv`의 `frame_count`와 같은지 비교해 표로 남긴다(표에는 영상 id와 숫자만). 다르면 사유를 기록한다.
 - [ ] **Step 6: 커밋.**
 
-**이 Task에서 제외:** 점 라벨을 두 번 찍은 결과의 비교(#8, 라벨 형식 확정 후), 노트북(Task 9).
-**팀 결정 후 확정할 것:** 프레임 번호 기준과 VFR 처리(#10), 좌표 형식(#2, #8, #9).
+**상태:** 프레임 번호 기준(#10)이 사실상 합의되어 구현할 수 있다. 박스 형식은 YOLO로 가정하며, 새 라벨 형식이 정해지면 읽는 부분만 맞춘다.
+
+### Task 5c: 라벨링 노트북 — 점 라벨 (이슈 #8, #12)
+
+**상태:** 점 라벨 형식(`video_id, event, frame, pass`, 점 이름)이 #8에서 확정된 뒤 진행한다. Task 5b가 먼저 끝나야 한다.
+
+**배경:** 도메인 담당이 주피터 노트북에서 직접 점(ready, transition, drive, catch, finish)을 찍는다. 노트북은 함수와 클래스를 정의하지 못하고 셀은 15줄 이하이므로(노트북 규칙), 위젯 연결을 포함한 모든 동작은 `src/`의 클래스가 맡고 노트북은 객체를 만들어 호출만 한다.
+
+**Files:**
+- Create: `src/wl_snatch/labeling.py`, `tutorials/label_points.ipynb`
+- Test: `tests/test_labeling.py`
+- 의존성 추가: `ipywidgets` (`pyproject.toml`, `uv.lock`)
+
+**Interfaces (잠정):**
+- Consumes: `frames.read_frame`, `frames.count_frames`, `label_viewer.draw_overlay`.
+- Produces (`labeling.py`):
+  - `EVENTS = ("ready", "transition", "drive", "catch", "finish")`
+  - `PointLabelStore(path: Path)`: `add(video_id, event, frame, pass_no)`, `read() -> list[PointLabel]`. 파일은 `data/annotations/`의 CSV(git 추적), 열은 `video_id, event, frame, pass`. 같은 `(video_id, event, pass)`를 다시 찍으면 덮어쓰고 이전 값은 남기지 않는다. 범위를 벗어난 프레임 번호와 알 수 없는 event는 `ValueError`.
+  - `shuffled_order(video_ids: Sequence[str], seed: int) -> list[str]`: 같은 seed면 같은 순서.
+  - `LabelingSession(video_path, video_id, store, pass_no)`: `goto(frame)`, `step(delta)`, `record(event)`, `visible_labels() -> list[PointLabel]`(pass 2에서는 pass 1 결과를 숨김), `show()`(위젯 표시, 그린 배열은 화면에만 표시하고 파일로 저장하지 않음).
+
+- [ ] **Step 1: 실패하는 테스트 작성** (합성 영상과 합성 좌표만 사용. 위젯 UI가 아니라 메서드를 검증한다).
+  - `test_recorded_point_is_saved_and_read_back_equal`
+  - `test_recording_same_event_again_overwrites`
+  - `test_unknown_event_raises_value_error`
+  - `test_frame_outside_video_raises_value_error`
+  - `test_pass_two_hides_pass_one_labels`
+  - `test_shuffled_order_is_deterministic_for_seed_and_a_permutation`
+  - `test_step_clamps_at_first_and_last_frame`
+  - `test_session_writes_no_image_file`
+- [ ] **Step 2: 실패 확인.**
+- [ ] **Step 3: 구현.** `ipywidgets`의 슬라이더와 버튼은 `LabelingSession.show()` 안에서만 만든다.
+- [ ] **Step 4: 통과 확인.**
+- [ ] **Step 5: 노트북 작성.** `tutorials/label_points.ipynb`는 영상 id와 pass 번호를 넣고 `LabelingSession(...).show()`를 호출하는 셀만 갖는다. 저장된 출력이 없어야 한다. 노트북이 생기면 Task 9의 위생 검사와 `nbstripout`(pre-commit)을 이 Task에서 함께 적용한다.
+- [ ] **Step 6: 커밋.**
+
+**이 Task에서 제외:** 관절 점 라벨(#9), 점 라벨 두 번 찍기 결과의 비교 그림(형식 확정 후 별도 Task), 라벨 도구 선택(#8의 방식 A, B, C 중 C로 진행하는 것은 동료의 제안이다).
 
 ### Task 6: 탐지 평가기
 

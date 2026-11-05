@@ -62,3 +62,23 @@ def test_videos_images_and_unlisted_data_are_ignored(path: str):
 )
 def test_metadata_annotations_and_splits_are_tracked(path: str):
     assert _check_ignore(path) == 1
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "data/annotations/x.webp",
+        "data/annotations/x.gif",
+        "data/annotations/x.bmp",
+        "data/annotations/x.tiff",
+        "data/annotations/x.tif",
+        "data/annotations/x.heic",
+        "data/metadata/IMG_0001.JPG",
+        "data/metadata/IMG_0001.PNG",
+        "data/metadata/IMG_0001.HEIC",
+        "data/raw/videos/IMG_0001.MOV",
+        "data/raw/videos/clip.MP4",
+    ],
+)
+def test_other_image_formats_and_upper_case_extensions_are_ignored(path: str):
+    assert _check_ignore(path) == 0
