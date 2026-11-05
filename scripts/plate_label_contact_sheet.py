@@ -44,6 +44,10 @@ def main() -> None:
             sheets += 1
             print(f"wrote {out}")
         print(f"{name}: images={len(images)} sheets={sheets} unreadable={unreadable}")
+    print(
+        f"NOTICE: {args.out_dir} 의 이미지에는 촬영 대상자의 얼굴이 담겨 있습니다. "
+        "git, 이슈, PR 어디에도 올리지 마세요."
+    )
 
 
 if __name__ == "__main__":
