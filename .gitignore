@@ -1,0 +1,40 @@
+# 데이터 (영상에 사람이 찍혀 있음). README만 추적한다.
+data/*
+!data/README.md
+# 표와 라벨 텍스트(메타데이터, 어노테이션, 분할)는 팀이 같은 값을 쓰도록 추적한다.
+!data/metadata/
+!data/annotations/
+!data/splits/
+# 영상과 영상에서 뽑은 이미지에는 얼굴이 나오므로 어느 폴더에 있어도 추적하지 않는다.
+# 대문자 확장자(휴대폰이 만드는 .MOV, .HEIC 등)도 막기 위해 글자마다 대소문자를 모두 적는다.
+data/**/*.[mM][pP]4
+data/**/*.[mM][oO][vV]
+data/**/*.[aA][vV][iI]
+data/**/*.[mM][kK][vV]
+data/**/*.[jJ][pP][gG]
+data/**/*.[jJ][pP][eE][gG]
+data/**/*.[pP][nN][gG]
+data/**/*.[wW][eE][bB][pP]
+data/**/*.[gG][iI][fF]
+data/**/*.[bB][mM][pP]
+data/**/*.[tT][iI][fF]
+data/**/*.[tT][iI][fF][fF]
+data/**/*.[hH][eE][iI][cC]
+
+# 모델 가중치, 산출물
+*.pt
+artifacts/
+
+# 환경
+.env
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# 노트북
+.ipynb_checkpoints/
+
+# 작업 도구
+.superpowers/
+.claude/worktrees/

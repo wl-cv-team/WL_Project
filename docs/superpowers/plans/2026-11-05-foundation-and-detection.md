@@ -40,6 +40,8 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 1. 아카이브 라벨 재사용 여부, 재라벨링 필요 시 담당자와 규모.
 2. TCN 적용 위치 승인 절차와 "시도했으나 효과 없음" 결과의 허용 여부. (이 계획은 TCN을 구현하지 않으므로 기록만 한다.)
 
+**2026-11-06 결과:** `0002`에 기록되었다. 기존 라벨은 쓰지 않고 새로 라벨링한다. baseline 숫자를 내는 실행(Task 6 이후의 실행 단계)은 새 라벨이 나온 뒤로 미루고, 코드와 형식 준비는 합성 데이터로 테스트하며 진행한다. 새 라벨 전까지 Task 6b의 "실제 실행"(Step 5)과 Task 8의 모델 비교 실행은 하지 않는다.
+
 ---
 
 ### Task 1: 저장소 뼈대와 문서 기본
@@ -61,7 +63,7 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 - [ ] **Step 3: 실패 확인.** Run: `uv run pytest tests/test_scaffold.py -v` → FAIL (패키지 없음).
 - [ ] **Step 4: 뼈대 작성.** `pyproject.toml`은 setuptools src 레이아웃, 패키지명 `wl_snatch`, spec 9절의 라이브러리와 dev 그룹(pytest, jupyterlab). `.gitignore`는 `data/*`(단 `data/README.md` 제외), `*.pt`, `artifacts/`, `.env`, `.venv/`, 노트북 체크포인트를 제외한다. `docs/vision.md`에는 spec 1·2·4절을 옮겨 쓰고 **표현 규칙**(근거 전에 판정 금지, 비유 금지, 측정값과 `N/A`+사유 중심)을 별도 절로 둔다. `docs/roadmap.md`는 G2~G7의 순서와 의존성만 적고 CI를 "첫 PR 이후"로 적는다. `docs/literature/README.md`에는 이 대화에서 찾은 문헌과 URL을 옮기고, 각 항목에 "초록 기준, 원문 미확인" 표기를 붙인다. PR 템플릿에는 표현 규칙 체크박스, "노트북에 로직 없음" 체크박스, 리뷰어가 확인할 단계 간 약속 항목을 넣는다.
 - [ ] **Step 5: 통과 확인.** Run: `uv run pytest tests/test_scaffold.py -v` → 3 passed.
-- [ ] **Step 6: 커밋.** `main`에 커밋이 아직 없다. 동료의 요청으로 사용자(fabxoe)가 초기 프레임을 만드는 중이므로, `main`의 첫 부트스트랩 커밋은 **사용자가 예외로 직접 올린다.** (에이전트는 `main`에 커밋하거나 push하지 않는다.) 사용자가 `main`을 올린 것을 확인한 뒤, 브랜치 `feature/scaffold`에서 커밋하고 PR을 올린다. 그때까지는 변경을 커밋하지 않고 작업 트리에 둔다.
+- [ ] **Step 6: 커밋.** `main`의 부트스트랩 커밋(`d71a0fe`)은 사용자의 허락으로 이미 올라갔다. 이후 모든 작업은 브랜치 `feature/scaffold`에서 커밋하고, `main`에는 직접 커밋하거나 push하지 않는다. `.gitignore`에 `.superpowers/`와 `.claude/worktrees/`도 추가한다.
 
 ### Task 2: 단계 간 약속 `contracts.py`
 
@@ -142,7 +144,7 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 ### Task 5: 아카이브 탐지 라벨 점검
 
 **Files:**
-- Create: `src/wl_snatch/label_audit.py`, `scripts/audit_plate_labels.py`, `scripts/plate_label_contact_sheet.py`
+- Create: `src/wl_snatch/label_audit.py`, `scripts/audit_plate_labels.py` (구현 당시에는 `scripts/plate_label_contact_sheet.py`와 `contact_sheet.py`도 만들었으나 이미지를 파일로 만드는 코드라 #11, #12에 따라 삭제했다)
 - Test: `tests/test_label_audit.py`
 
 **Interfaces:**
@@ -162,8 +164,92 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 - [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_label_audit.py -v` → FAIL.
 - [ ] **Step 3: 구현.** 라벨은 YOLO 형식(`class cx cy w h`, 0~1)으로 읽는다. 예외를 던지지 않고 `LabelIssue`로 담는다.
 - [ ] **Step 4: 통과 확인.** → 7 passed.
-- [ ] **Step 5: 실제 점검.** `plate_dataset`(30장)과 `plate_dataset_v2`(150장)에 실행해 `artifacts/label_audit/`에 보고서를 저장한다. `plate_label_contact_sheet.py`로 박스를 그린 이미지 모음을 만들어, 사람이 눈으로 확인할 수 있게 한다.
+- [ ] **Step 5: 실제 점검.** `plate_dataset`(30장)과 `plate_dataset_v2`(150장)에 실행해 `artifacts/label_audit/`에 보고서를 저장한다. (당시에는 컨택트 시트 이미지로 눈 확인을 했다. 이후 방식은 Task 5b의 뷰어로 대체한다.)
 - [ ] **Step 6: 커밋.** 이후 **Checkpoint**로 간다.
+
+### Task 5b: 프레임 읽기와 라벨 확인 뷰어 — 박스 (이슈 #12, #11, #10 반영)
+
+**배경:** 얼굴이 담긴 이미지는 저장소에 올리지 않고 파일로도 만들지 않는다(#11). 라벨은 좌표와 프레임 번호만 git에 있고, 확인은 로컬 영상에서 프레임을 메모리로 읽어 좌표를 그린 **배열**을 돌려받아 노트북이 화면에 표시한다(#12). 이 Task는 박스만 다룬다. 관절 점과 단계 점은 형식이 정해진 뒤(#8, #9) 같은 구조에 추가한다. 아래 값은 잠정이다.
+
+**사전 측정(2026-11-06, 읽기 전용, 영상 54개):**
+- OpenCV `CAP_PROP_FRAME_COUNT`와 순차 디코딩 수가 49개 영상에서 다르다(컨테이너 값이 큼). ffprobe `-count_frames`는 OpenCV 디코딩 수와 같다(6개 영상). `videos.csv`의 `frame_count`는 디코딩 수와 같다(샘플 6개).
+- 타임스탬프 간격은 52개 영상에서 일정(24, 30, 60fps). `a05_sn_f_01`은 처음 두 프레임 사이만 8.7ms. `b00_sn_f_01`은 5.0ms와 18.3ms가 하나씩. `c01_sn_f_02`, `c04_sn_f_03`은 첫 프레임이 66.7ms.
+- `videos.csv`의 `fps`는 평균값으로 추정되며 시간 계산에 쓰지 않는다.
+- 동료가 프레임 번호를 디코딩 순서(0부터)로 하자는 제안에 동의했다(#10).
+
+**Files:**
+- Create: `src/wl_snatch/frames.py`, `src/wl_snatch/label_viewer.py`
+- Test: `tests/test_frames.py`, `tests/test_label_viewer.py`
+- 재사용: `label_audit.read_boxes`(YOLO 라벨 읽기). 읽는 부분과 그리는 부분을 분리한다.
+
+**Interfaces:**
+- Produces (`frames.py`):
+  - `read_frame(video_path: Path, frame_index: int) -> np.ndarray`: 처음부터 순차 디코딩해 `frame_index`번째(0부터)를 반환한다. 탐색(seek)을 쓰지 않는다. 읽을 수 없거나 범위를 벗어나면 영상 이름과 번호가 담긴 `ValueError`. 조용히 다른 프레임을 반환하지 않는다.
+  - `count_frames(video_path: Path) -> int`: 순차 디코딩으로 센 프레임 수. 컨테이너 메타데이터 값은 쓰지 않는다.
+  - `frame_times_ms(video_path: Path) -> list[float]`: 디코딩한 프레임마다의 시각(ms). 첫 프레임을 0으로 맞춘다(첫 프레임이 0이 아닌 영상이 있다).
+- Produces (`label_viewer.py`):
+  - `Overlay(boxes: tuple[tuple[float, float, float, float], ...], skipped: tuple[str, ...])` frozen dataclass. 박스는 0~1로 정규화한 `cx, cy, w, h`. `skipped`는 좌표가 `N/A`라 건너뛴 항목의 사유.
+  - `flag_box_issues(boxes, min_side: float = 0.02, max_side: float = 0.9) -> list[str]`: 한 변이 `min_side`보다 작거나 `max_side`보다 큰 박스의 설명. 기준값은 인자로 바꾼다.
+  - `draw_overlay(frame: np.ndarray, overlay: Overlay) -> np.ndarray`: 입력을 바꾸지 않고 복사본에 박스를 그려 **배열을 돌려준다.**
+  - `render_label_frame(video_path: Path, frame_index: int, overlay: Overlay) -> tuple[np.ndarray, list[str]]`: 프레임을 읽어 그린 배열과 안내 문구(이상값 설명, 건너뛴 사유)를 돌려준다. 화면 표시와 파일 저장은 하지 않는다.
+- 이 모듈에는 이미지를 파일로 저장하는 함수를 두지 않는다. 화면 표시는 노트북이 한다.
+
+- [ ] **Step 1: 실패하는 테스트 작성** (OpenCV로 임시 폴더에 프레임마다 색이 다른 5프레임 합성 영상을 만든다. 실제 사람이 나온 영상은 쓰지 않는다).
+  - `test_read_frame_returns_requested_index`
+  - `test_read_frame_out_of_range_raises_value_error_with_name_and_index`
+  - `test_read_frame_missing_video_raises_value_error`
+  - `test_count_frames_matches_decoded_frames`
+  - `test_frame_times_start_at_zero_and_have_one_entry_per_frame`
+  - `test_draw_overlay_does_not_modify_input`
+  - `test_draw_overlay_changes_pixels_at_box_edge`
+  - `test_flag_box_issues_flags_width_0_024_height_0_0047`
+  - `test_flag_box_issues_passes_normal_plate_box`
+  - `test_flag_box_issues_threshold_is_configurable`
+  - `test_render_label_frame_reports_skipped_reasons`
+  - `test_no_image_file_is_written` (렌더링 후 작업 폴더와 임시 폴더에 새 파일이 없음)
+- [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_frames.py tests/test_label_viewer.py -v` → FAIL.
+- [ ] **Step 3: 구현.** 프레임 읽기는 순차 디코딩.
+- [ ] **Step 4: 통과 확인.**
+- [ ] **Step 5: 실제 확인.** 로컬 영상 54개에서 `count_frames`가 `videos.csv`의 `frame_count`와 같은지 비교해 표로 남긴다(표에는 영상 id와 숫자만). 다르면 사유를 기록한다.
+- [ ] **Step 6: 커밋.**
+
+**상태:** 프레임 번호 기준(#10)이 사실상 합의되어 구현할 수 있다. 박스 형식은 YOLO로 가정하며, 새 라벨 형식이 정해지면 읽는 부분만 맞춘다.
+
+### Task 5c: 라벨링 노트북 — 점 라벨 (이슈 #8, #12)
+
+**상태:** 점 라벨 형식(`video_id, event, frame, pass`, 점 이름)이 #8에서 확정된 뒤 진행한다. Task 5b가 먼저 끝나야 한다.
+
+**배경:** 도메인 담당이 주피터 노트북에서 직접 점(ready, transition, drive, catch, finish)을 찍는다. 노트북은 함수와 클래스를 정의하지 못하고 셀은 15줄 이하이므로(노트북 규칙), 위젯 연결을 포함한 모든 동작은 `src/`의 클래스가 맡고 노트북은 객체를 만들어 호출만 한다.
+
+**Files:**
+- Create: `src/wl_snatch/labeling.py`, `tutorials/label_points.ipynb`
+- Test: `tests/test_labeling.py`
+- 의존성 추가: `ipywidgets` (`pyproject.toml`, `uv.lock`)
+
+**Interfaces (잠정):**
+- Consumes: `frames.read_frame`, `frames.count_frames`, `label_viewer.draw_overlay`.
+- Produces (`labeling.py`):
+  - `EVENTS = ("ready", "transition", "drive", "catch", "finish")`
+  - `PointLabelStore(path: Path)`: `add(video_id, event, frame, pass_no)`, `read() -> list[PointLabel]`. 파일은 `data/annotations/`의 CSV(git 추적), 열은 `video_id, event, frame, pass`. 같은 `(video_id, event, pass)`를 다시 찍으면 덮어쓰고 이전 값은 남기지 않는다. 범위를 벗어난 프레임 번호와 알 수 없는 event는 `ValueError`.
+  - `shuffled_order(video_ids: Sequence[str], seed: int) -> list[str]`: 같은 seed면 같은 순서.
+  - `LabelingSession(video_path, video_id, store, pass_no)`: `goto(frame)`, `step(delta)`, `record(event)`, `visible_labels() -> list[PointLabel]`(pass 2에서는 pass 1 결과를 숨김), `show()`(위젯 표시, 그린 배열은 화면에만 표시하고 파일로 저장하지 않음).
+
+- [ ] **Step 1: 실패하는 테스트 작성** (합성 영상과 합성 좌표만 사용. 위젯 UI가 아니라 메서드를 검증한다).
+  - `test_recorded_point_is_saved_and_read_back_equal`
+  - `test_recording_same_event_again_overwrites`
+  - `test_unknown_event_raises_value_error`
+  - `test_frame_outside_video_raises_value_error`
+  - `test_pass_two_hides_pass_one_labels`
+  - `test_shuffled_order_is_deterministic_for_seed_and_a_permutation`
+  - `test_step_clamps_at_first_and_last_frame`
+  - `test_session_writes_no_image_file`
+- [ ] **Step 2: 실패 확인.**
+- [ ] **Step 3: 구현.** `ipywidgets`의 슬라이더와 버튼은 `LabelingSession.show()` 안에서만 만든다.
+- [ ] **Step 4: 통과 확인.**
+- [ ] **Step 5: 노트북 작성.** `tutorials/label_points.ipynb`는 영상 id와 pass 번호를 넣고 `LabelingSession(...).show()`를 호출하는 셀만 갖는다. 저장된 출력이 없어야 한다. 노트북이 생기면 Task 9의 위생 검사와 `nbstripout`(pre-commit)을 이 Task에서 함께 적용한다.
+- [ ] **Step 6: 커밋.**
+
+**이 Task에서 제외:** 관절 점 라벨(#9), 점 라벨 두 번 찍기 결과의 비교 그림(형식 확정 후 별도 Task), 라벨 도구 선택(#8의 방식 A, B, C 중 C로 진행하는 것은 동료의 제안이다).
 
 ### Task 6: 탐지 평가기
 
@@ -193,6 +279,36 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 - [ ] **Step 4: 통과 확인.** → 7 passed.
 - [ ] **Step 5: 커밋.**
 
+### Task 6b: 분할 기준 데이터셋과 정답 로더 (사전 점검에서 추가)
+
+**Files:**
+- Create: `src/wl_snatch/dataset.py`, `scripts/build_plate_dataset.py`
+- Test: `tests/test_dataset.py`
+
+**Interfaces:**
+- Consumes: `make_person_split` 결과(Task 4), `GroundTruthFrame`(Task 6).
+- Produces:
+  - `parse_frame_name(name: str) -> tuple[str, int]` — `c02_sn_f_01_frame_0109.jpg` → `("c02_sn_f_01", 109)`. 형식이 다르면 `ValueError`.
+  - `build_yolo_dataset(image_dirs: list[Path], label_dirs: list[Path], split: pd.DataFrame, out_dir: Path) -> Path` — 라벨된 프레임을 새 사람 단위 분할(`role`)에 따라 `out_dir/images|labels/{train,validation}`로 복사하고, 상대경로 `dataset.yaml`(`names: {0: plate}`)을 쓴 뒤 그 경로를 돌려준다. 분할에 없는 영상의 프레임은 복사하지 않고 개수를 반환 로그에 남긴다. 같은 파일명이 두 폴더에 있으면 `ValueError`.
+  - `load_ground_truth(images_dir: Path, labels_dir: Path) -> list[GroundTruthFrame]` — YOLO 정규화 좌표를 이미지 크기로 곱해 픽셀 좌표로 바꾼다.
+
+**이유:** 아카이브의 `images/train|validation`은 옛 분할이다. 새 사람 단위 분할과 섞이면 같은 사람이 양쪽에 들어가 평가가 무효가 된다. 평가는 정답 박스가 있는 라벨된 프레임에서만 한다. 원판 없는 프레임(음성)이 데이터에 없으면 그 개수 0을 보고서에 명시하고, 오탐은 라벨된 프레임의 정답 밖 박스로만 센다.
+
+- [ ] **Step 1: 실패하는 테스트 작성.**
+  - `test_parse_frame_name_extracts_video_id_and_index`
+  - `test_parse_frame_name_rejects_unexpected_format`
+  - `test_build_dataset_places_frames_by_person_role`
+  - `test_build_dataset_writes_relative_dataset_yaml`
+  - `test_build_dataset_skips_frames_of_unsplit_videos_and_reports_count`
+  - `test_build_dataset_rejects_duplicate_filename_across_dirs`
+  - `test_no_person_appears_in_both_train_and_validation_folders`
+  - `test_load_ground_truth_converts_normalized_to_pixels`
+- [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_dataset.py -v` → FAIL.
+- [ ] **Step 3: 구현.**
+- [ ] **Step 4: 통과 확인.** → 8 passed.
+- [ ] **Step 5: 실제 실행.** `plate_dataset`과 `plate_dataset_v2`의 이미지·라벨을 합쳐 `data/plate_dataset_split/`를 만든다. 사람 누수 검사를 통과해야 한다. (Checkpoint에서 재라벨링이 정해졌다면 그 라벨을 쓴다.)
+- [ ] **Step 6: 커밋.**
+
 ### Task 7: 탐지기와 설정
 
 **Files:**
@@ -204,6 +320,7 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
   - `DetectorConfig(model_name: str, imgsz: int = 640, conf: float = 0.25, device: str = "auto", seed: int = 0, epochs: int = 50)` frozen dataclass. `imgsz`, `epochs`가 0 이하이거나 `conf`가 0~1 밖이면 `ValueError`.
   - `resolve_device(requested: str, mps_available: bool, cuda_available: bool) -> tuple[str, str | None]` — 사용할 장치와, 요청과 다를 때의 사유.
   - `detect_video(video_path: Path, video_id: str, model: Callable, config: DetectorConfig) -> list[FrameDetections]` — `model`은 프레임을 받아 박스 목록을 돌려주는 호출 가능 객체이므로 테스트에서 가짜로 바꿀 수 있다. 읽을 수 없는 영상은 `na_reason="video_unreadable"`인 프레임 하나를 돌려준다.
+  - `detect_images(image_paths: list[Path], model: Callable, config: DetectorConfig) -> list[FrameDetections]` — 파일명을 `parse_frame_name`(Task 6b)으로 해석해 `video_id`, `frame_index`를 채운다. 읽을 수 없는 이미지는 `na_reason="image_unreadable"`. (평가는 영상이 아니라 라벨된 프레임 이미지에서 한다.)
   - `load_ultralytics_model(config: DetectorConfig) -> Callable` — Ultralytics를 감싼다. 가중치 이름은 Step 1에서 확인한 값을 쓴다.
 
 - [ ] **Step 1: 가중치 이름 확인.** 공식 문서로 YOLO26, YOLO11, YOLOv8 nano 계열의 정확한 가중치 이름을 확인해 `docs/decisions/0001-environment.md`에 추가한다. 학습은 `dataset.yaml`의 `plate` 단일 클래스로 파인튜닝한다.
@@ -214,10 +331,12 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
   - `test_resolve_device_unavailable_returns_cpu_with_reason`
   - `test_auto_prefers_mps_then_cuda_then_cpu`
   - `test_detect_video_uses_injected_model_for_every_frame`
+  - `test_detect_images_fills_video_id_and_frame_index_from_filename`
+  - `test_unreadable_image_gives_na_frame_with_reason`
   - `test_unreadable_video_gives_na_frame_with_reason`
 - [ ] **Step 3: 실패 확인.** Run: `uv run pytest tests/test_config.py tests/test_detector.py -v` → FAIL.
 - [ ] **Step 4: 구현.** 가짜 모델로 테스트가 통과하게 한 뒤 `load_ultralytics_model`을 붙인다.
-- [ ] **Step 5: 통과 확인.** → 7 passed.
+- [ ] **Step 5: 통과 확인.** → 9 passed.
 - [ ] **Step 6: 커밋.**
 
 ### Task 8: 모델 비교와 결정 기록
@@ -241,7 +360,7 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 - [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_compare.py -v` → FAIL.
 - [ ] **Step 3: 구현.**
 - [ ] **Step 4: 통과 확인.** → 4 passed.
-- [ ] **Step 5: YOLO26 기준선 실행.** `scripts/train_detector.py`로 YOLO26을 학습하고 Task 4의 `validation` 사람들의 영상에서 `scripts/run_detector.py`와 평가기를 돌린다. M2 8GB에서 메모리 때문에 실패하면 `imgsz`나 배치를 줄이고 그 사실을 기록한다.
+- [ ] **Step 5: YOLO26 기준선 실행.** `scripts/train_detector.py`로 YOLO26을 `data/plate_dataset_split/`(Task 6b)의 train으로 학습하고, validation 이미지에서 `detect_images`와 `load_ground_truth`, 평가기를 돌린다. M2 8GB에서 메모리 때문에 실패하면 `imgsz`나 배치를 줄이고 그 사실을 기록한다.
 - [ ] **Step 6: YOLO11, YOLOv8 비교 실행.** 모델만 바꾸고 나머지는 같게 한다. `scripts/compare_detectors.py`가 `assert_single_axis`를 먼저 호출한다.
 - [ ] **Step 7: 결정 기록.** `docs/decisions/0003-detector-baseline.md`에 비교 표, 조건, seed, 실패 사례(오탐 중심), `N/A` 개수를 적는다. 해석은 측정값 범위에서만 쓴다.
 - [ ] **Step 8: 커밋.**
