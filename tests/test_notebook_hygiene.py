@@ -2,6 +2,8 @@ import ast
 import json
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 SKIPPED_DIRS = {".venv", ".git", ".superpowers", ".claude", ".ipynb_checkpoints", "node_modules"}
 MAX_CELL_LINES = 15
@@ -45,10 +47,36 @@ def definition_kinds(source: str) -> list[str]:
     return kinds
 
 
+def checked_definition_kinds(where: str, source: str) -> list[str]:
+    """Definition kinds of a cell. IPython magic and shell lines are skipped.
+
+    A cell that still cannot be parsed fails with a message naming the cell.
+    """
+    lines = [
+        "" if line.lstrip().startswith(("%", "!")) else line for line in source.splitlines()
+    ]
+    try:
+        return definition_kinds("\n".join(lines))
+    except SyntaxError as error:
+        raise AssertionError(f"{where}: cell cannot be parsed ({error.msg}, line {error.lineno})")
+
+
+def test_cell_with_ipython_magics_is_parsed_without_syntax_error():
+    source = "%matplotlib inline\n!ls\nvalue = 1\n"
+    assert checked_definition_kinds("probe.ipynb cell 0", source) == []
+    assert checked_definition_kinds("probe.ipynb cell 1", "%time\ndef f():\n    pass\n") == ["def"]
+
+
+def test_unparseable_cell_fails_with_message_naming_notebook_and_cell():
+    with pytest.raises(AssertionError) as excinfo:
+        checked_definition_kinds("probe.ipynb cell 3", "x = (\n")
+    assert "probe.ipynb cell 3" in str(excinfo.value)
+
+
 def test_no_function_or_class_definitions_in_notebooks():
     for path in notebook_paths():
         for index, source in code_cells(path):
-            kinds = definition_kinds(source)
+            kinds = checked_definition_kinds(f"{path.relative_to(ROOT)} cell {index}", source)
             assert not kinds, f"{path.relative_to(ROOT)} cell {index}: {kinds}"
 
 

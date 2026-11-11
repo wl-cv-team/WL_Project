@@ -17,6 +17,7 @@ Nothing in this module writes an image file. The frame shown by
 from __future__ import annotations
 
 import csv
+import html
 import os
 import random
 import tempfile
@@ -87,11 +88,13 @@ class PointLabelStore:
         frame_count: int,
     ) -> None:
         """Store one label, replacing the one with the same (video_id, event, pass)."""
+        if not isinstance(video_id, str) or not video_id.strip():
+            raise ValueError(f"video_id {video_id!r} is empty or not text")
         if event not in EVENTS:
             raise ValueError(f"{video_id}: event {event!r} is not one of {', '.join(EVENTS)}")
-        if pass_no not in PASSES:
-            raise ValueError(f"{video_id}: pass {pass_no!r} is not 1 or 2")
-        if not isinstance(frame, int) or not 0 <= frame < frame_count:
+        if type(pass_no) is not int or pass_no not in PASSES:
+            raise ValueError(f"{video_id}: pass {pass_no!r} is not the integer 1 or 2")
+        if type(frame) is not int or not 0 <= frame < frame_count:
             raise ValueError(
                 f"{video_id}: frame {frame!r} is outside 0..{frame_count - 1} "
                 f"(video has {frame_count} frames)"
@@ -122,16 +125,26 @@ class PointLabelStore:
         return tuple(event for event in required_events(completion) if event not in recorded)
 
     def _read_all(self) -> list[PointLabel]:
-        if not self.path.exists():
+        if not self.path.exists() or self.path.stat().st_size == 0:
             return []
         labels = []
+        first_line: dict[tuple[str, str, int], int] = {}
         with self.path.open(newline="", encoding="utf-8") as handle:
             reader = csv.reader(handle)
             header = next(reader, None)
             if header != _COLUMNS:
                 raise ValueError(f"{self.path.name} line 1: header is {header!r}, expected {_COLUMNS!r}")
             for row in reader:
-                labels.append(self._parse_row(row, reader.line_num))
+                label = self._parse_row(row, reader.line_num)
+                key = (label.video_id, label.event, label.pass_no)
+                if key in first_line:
+                    raise ValueError(
+                        f"{self.path.name} line {reader.line_num}: {label.video_id}: event "
+                        f"{label.event!r} pass {label.pass_no} already recorded on "
+                        f"line {first_line[key]}"
+                    )
+                first_line[key] = reader.line_num
+                labels.append(label)
         return labels
 
     def _parse_row(self, row: list[str], line: int) -> PointLabel:
@@ -139,7 +152,7 @@ class PointLabelStore:
         if len(row) != len(_COLUMNS):
             raise ValueError(f"{where}: expected {len(_COLUMNS)} columns, found {len(row)}")
         video_id, event, frame_text, pass_text = row
-        if not video_id:
+        if not video_id.strip():
             raise ValueError(f"{where}: video_id is empty")
         if event not in EVENTS:
             raise ValueError(f"{where}: {video_id}: event {event!r} is not one of {', '.join(EVENTS)}")
@@ -185,6 +198,11 @@ def shuffled_order(video_ids: Sequence[str], seed: int) -> list[str]:
     order = list(video_ids)
     random.Random(seed).shuffle(order)
     return order
+
+
+def guidance_html(lines: Sequence[str]) -> str:
+    """Lines joined with <br>, each escaped so that text such as a video_id is not markup."""
+    return "<br>".join(html.escape(line) for line in lines)
 
 
 class LabelingSession:
@@ -279,7 +297,7 @@ class LabelingSession:
             if not encoded_ok:
                 raise ValueError(f"{self.video_id}: frame {self.frame} could not be encoded")
             picture.value = encoded.tobytes()
-            text.value = "<br>".join(lines)
+            text.value = guidance_html(lines)
 
         def on_slider(change) -> None:
             self.goto(change["new"])
@@ -298,7 +316,7 @@ class LabelingSession:
                 self.record(selector.value)
                 message.value = ""
             except ValueError as error:
-                message.value = str(error)
+                message.value = guidance_html([str(error)])
             refresh()
 
         slider.observe(on_slider, names="value")

@@ -257,3 +257,77 @@ def test_session_and_store_write_no_image_file(session_parts, tmp_path):
     assert files == {session_parts[0], session_parts[1].path}
     assert not any(p.suffix.lower() in {".png", ".jpg", ".jpeg"} for p in files)
     assert os.path.exists(session_parts[1].path)
+
+
+@pytest.mark.parametrize(
+    ("frame", "pass_no"),
+    [(True, 1), (3.0, 1), (2, True), (2, 1.0), (2, 2.0), ("2", 1)],
+)
+def test_non_int_frame_or_pass_is_rejected_and_file_unchanged(store, frame, pass_no):
+    add(store, "v1", "ready", 2, 1)
+    before = store.path.read_bytes()
+    with pytest.raises(ValueError) as excinfo:
+        add(store, "v1", "drive", frame, pass_no)
+    assert "v1" in str(excinfo.value)
+    assert repr(frame if frame in (True, 3.0, "2") else pass_no) in str(excinfo.value)
+    assert store.path.read_bytes() == before
+    assert store.read() == [PointLabel("v1", "ready", 2, 1)]
+
+
+@pytest.mark.parametrize("video_id", ["", "  ", "\t\n"])
+def test_empty_or_blank_video_id_is_rejected_and_file_stays_readable(store, video_id):
+    add(store, "v1", "ready", 2, 1)
+    with pytest.raises(ValueError):
+        add(store, video_id, "ready", 2, 1)
+    assert store.read() == [PointLabel("v1", "ready", 2, 1)]
+
+
+def test_blank_video_id_is_rejected_when_no_file_exists(store):
+    with pytest.raises(ValueError):
+        add(store, "", "ready", 2, 1)
+    assert not store.path.exists()
+
+
+def test_zero_byte_file_reads_as_empty_and_add_writes_header_and_row(tmp_path):
+    path = tmp_path / "p.csv"
+    path.write_bytes(b"")
+    store = PointLabelStore(path)
+    assert store.read() == []
+    add(store, "v1", "ready", 2, 1)
+    assert path.read_text(encoding="utf-8").splitlines() == [
+        "video_id,event,frame,pass",
+        "v1,ready,2,1",
+    ]
+
+
+def test_duplicate_key_rows_in_file_raise_value_error_with_line_numbers(tmp_path):
+    path = tmp_path / "p.csv"
+    path.write_text(
+        "video_id,event,frame,pass\nv1,ready,2,1\nv1,drive,4,1\nv1,ready,3,1\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError) as excinfo:
+        PointLabelStore(path).read()
+    message = str(excinfo.value)
+    assert "line 4" in message
+    assert "line 2" in message
+    assert "v1" in message
+    assert "ready" in message
+
+
+def test_video_id_with_comma_quote_and_newline_round_trips(store):
+    ids = ['a,b', 'a"b', "a\nb", 'x\n,"y']
+    for index, video_id in enumerate(ids):
+        add(store, video_id, "ready", index, 1)
+    labels = store.read()
+    assert sorted(label.video_id for label in labels) == sorted(ids)
+    assert len(labels) == len(ids)
+    assert {label.video_id: label.frame for label in labels} == {v: i for i, v in enumerate(ids)}
+
+
+def test_guidance_html_escapes_markup_in_video_id_and_messages():
+    html_text = labeling.guidance_html(["<b>x</b>  pass 1", "a & b"])
+    assert "<b>" not in html_text
+    assert "&lt;b&gt;x&lt;/b&gt;" in html_text
+    assert "a &amp; b" in html_text
+    assert "<br>" in html_text
