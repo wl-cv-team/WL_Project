@@ -27,6 +27,10 @@ git이 추적하는 것은 이 README와 아래 세 폴더의 표와 텍스트 �
 - `data/metadata/videos.csv`는 git이 추적하므로 팀원이 같은 파일에 직접 입력할 수 있습니다. `scripts/import_archive_data.py`는 이 파일을 덮어쓰지 않습니다.
 - 구조와 받는 방법은 데이터 이동 작업(후속 Task)에서 이 문서에 채웁니다. 현재는 미정입니다.
 
+## 점 라벨 `annotations/point_labels.csv` (이슈 #8, #12)
+
+`tutorials/label_points.ipynb`로 도메인 담당이 영상마다 인상 구간 경계 프레임을 직접 찍은 결과입니다. 열은 `video_id, event, frame, pass`이고, event는 `ready, transition, drive, catch, finish`, pass는 1 또는 2입니다. `frame`은 디코딩 순서의 0부터 시작하는 번호입니다(#10). `(video_id, event, pass)`가 모두 같을 때만 새 값이 옛 값을 대체하고, pass 1과 pass 2는 같은 프레임이어도 둘 다 보존합니다. 같은 영상에 pass 2 기록이 하나라도 있으면 그 영상의 pass 1은 추가도 수정도 할 수 없습니다. `completion`이 `h`인 영상은 `ready`, `transition`, `drive`만 필수이고 `catch`, `finish`는 "ignore"입니다. ignore는 파일에 행으로 남기지 않고 `completion` 값에서 도출하므로 기록이 없는 "누락"과 구별되며, 이 두 event를 기록하려 하면 오류입니다.
+
 ## `near_side` 열 (이슈 #7)
 
 - 영상에서 카메라에 가까운 쪽이 수행자의 왼쪽인지 오른쪽인지를 영상 단위로 기록합니다. 값은 `left` 또는 `right`입니다.

@@ -9,6 +9,7 @@ description = "인상(snatch) 영상 측정 연구 기반"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "ipywidgets>=8.1.9",
     "matplotlib",
     "numpy",
     "opencv-python",
@@ -19,7 +20,11 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest", "jupyterlab"]
+dev = [
+    "pytest",
+    "jupyterlab",
+    "nbstripout>=0.9.1",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
