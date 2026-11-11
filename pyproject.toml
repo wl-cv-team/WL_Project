@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wl_snatch"
+version = "0.1.0"
+description = "인상(snatch) 영상 측정 연구 기반"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ipywidgets>=8.1.9",
+    "matplotlib",
+    "numpy",
+    "opencv-python",
+    "pandas",
+    "torch",
+    "torchvision",
+    "ultralytics",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "jupyterlab",
+    "nbstripout>=0.9.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
