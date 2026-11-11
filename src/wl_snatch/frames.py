@@ -66,19 +66,40 @@ def count_frames(video_path: Path) -> int:
         capture.release()
 
 
-def frame_times_ms(video_path: Path) -> list[float]:
-    """Decoder timestamp (ms) of each decoded frame, shifted so the first frame is 0."""
+def raw_frame_times_ms(video_path: Path) -> list[float]:
+    """Decoder timestamp (ms) of each decoded frame, as reported, without any shift.
+
+    Raises ValueError when there are at least 2 frames and all report the same time.
+    """
     capture = _open(video_path)
     try:
         times = [t for _, t in _decode(capture)]
     finally:
         capture.release()
-    if not times:
-        return []
     if len(times) > 1 and len(set(times)) == 1:
         raise ValueError(
             f"{Path(video_path).name}: timestamps unavailable "
             f"(all {len(times)} frames report {times[0]} ms)"
         )
+    return times
+
+
+def frame_times_ms(video_path: Path) -> list[float]:
+    """Decoder timestamp (ms) of each decoded frame, shifted so the first frame is 0."""
+    times = raw_frame_times_ms(video_path)
+    if not times:
+        return []
     start = times[0]
     return [t - start for t in times]
+
+
+def frame_size(video_path: Path) -> tuple[int, int]:
+    """(width, height) of the first decoded frame."""
+    capture = _open(video_path)
+    try:
+        for frame, _ in _decode(capture):
+            height, width = frame.shape[:2]
+            return width, height
+    finally:
+        capture.release()
+    raise ValueError(f"{Path(video_path).name}: video has no decodable frame")
