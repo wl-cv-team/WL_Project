@@ -217,39 +217,70 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 
 ### Task 5c: 라벨링 노트북 — 점 라벨 (이슈 #8, #12)
 
-**상태:** 점 라벨 형식(`video_id, event, frame, pass`, 점 이름)이 #8에서 확정된 뒤 진행한다. Task 5b가 먼저 끝나야 한다.
+**상태:** 점 라벨 형식은 도메인 담당이 #12(2026-11-11)에서 확정했다. 점마다의 허용 오차 크기와 기준 pass 선택은 시범 라벨링 뒤에 정하며 이 Task와 무관하다.
 
-**배경:** 도메인 담당이 주피터 노트북에서 직접 점(ready, transition, drive, catch, finish)을 찍는다. 노트북은 함수와 클래스를 정의하지 못하고 셀은 15줄 이하이므로(노트북 규칙), 위젯 연결을 포함한 모든 동작은 `src/`의 클래스가 맡고 노트북은 객체를 만들어 호출만 한다.
+**배경:** 도메인 담당이 주피터 노트북에서 직접 점을 찍는다. 노트북은 함수와 클래스를 정의하지 못하고 셀은 15줄 이하이므로(노트북 규칙), 위젯 연결을 포함한 모든 동작은 `src/`의 클래스가 맡고 노트북은 객체를 만들어 호출만 한다. 화면에 보이는 이미지는 메모리에서만 인코딩하고 파일로 저장하지 않는다(#11).
+
+**확정된 규칙 (#12, 2026-11-11):**
+- 형식: `video_id, event, frame, pass`. event는 `ready, transition, drive, catch, finish`. pass는 1 또는 2.
+- 덮어쓰기: `(video_id, event, pass)`가 모두 같을 때만 새 값이 옛 값을 대체한다.
+- pass 1과 pass 2는 별개 기록이다. 같은 프레임을 찍어도 둘 다 보존한다.
+- pass 2가 진행 중인 영상은 pass 1을 수정할 수 없다. (구현 규칙, 컨트롤러 판단: 같은 `video_id`의 pass 2 기록이 하나라도 있으면 그 영상의 pass 1 기록은 추가와 수정이 모두 `ValueError`.)
+- half 영상(`completion == "h"`)은 ready, transition, drive만 필수. catch와 finish는 "ignore"이고 누락과 구별한다. (구현 규칙, 컨트롤러 판단: ignore는 데이터에 행으로 두지 않고 `completion` 값에서 도출한다. half 영상에 catch, finish를 기록하려 하면 `ValueError`. 누락은 필수 event 중 기록이 없는 것이다.)
 
 **Files:**
-- Create: `src/wl_snatch/labeling.py`, `tutorials/label_points.ipynb`
-- Test: `tests/test_labeling.py`
-- 의존성 추가: `ipywidgets` (`pyproject.toml`, `uv.lock`)
+- Create: `src/wl_snatch/labeling.py`, `tutorials/label_points.ipynb`, `.pre-commit-config.yaml`
+- Create: `tests/test_labeling.py`, `tests/test_notebook_hygiene.py` (Task 9에서 이쪽으로 옮김)
+- Modify: `pyproject.toml`과 `uv.lock`(`ipywidgets` 의존성 추가, dev 그룹에 `nbstripout`), `data/README.md`(라벨 파일 위치와 규칙 한 단락)
 
-**Interfaces (잠정):**
-- Consumes: `frames.read_frame`, `frames.count_frames`, `label_viewer.draw_overlay`.
+**Interfaces:**
+- Consumes: `frames.read_frame`, `frames.count_frames`.
 - Produces (`labeling.py`):
   - `EVENTS = ("ready", "transition", "drive", "catch", "finish")`
-  - `PointLabelStore(path: Path)`: `add(video_id, event, frame, pass_no)`, `read() -> list[PointLabel]`. 파일은 `data/annotations/`의 CSV(git 추적), 열은 `video_id, event, frame, pass`. 같은 `(video_id, event, pass)`를 다시 찍으면 덮어쓰고 이전 값은 남기지 않는다. 범위를 벗어난 프레임 번호와 알 수 없는 event는 `ValueError`.
-  - `shuffled_order(video_ids: Sequence[str], seed: int) -> list[str]`: 같은 seed면 같은 순서.
-  - `LabelingSession(video_path, video_id, store, pass_no)`: `goto(frame)`, `step(delta)`, `record(event)`, `visible_labels() -> list[PointLabel]`(pass 2에서는 pass 1 결과를 숨김), `show()`(위젯 표시, 그린 배열은 화면에만 표시하고 파일로 저장하지 않음).
+  - `required_events(completion: str) -> tuple[str, ...]`: `"f"`는 5개, `"h"`는 앞의 3개. 다른 값은 `ValueError`.
+  - `ignored_events(completion: str) -> tuple[str, ...]`: `"f"`는 빈 튜플, `"h"`는 `("catch", "finish")`.
+  - `PointLabel(video_id: str, event: str, frame: int, pass_no: int)` frozen dataclass.
+  - `PointLabelStore(path: Path)`:
+    - `add(video_id, event, frame, pass_no, *, completion, frame_count) -> None`: event가 `EVENTS`에 없으면, pass_no가 1이나 2가 아니면, `frame`이 `[0, frame_count)` 밖이면, half 영상의 ignore event이면, pass 2 기록이 있는 영상의 pass 1이면 `ValueError`(메시지에 video_id와 값). 같은 `(video_id, event, pass_no)`면 대체. 파일은 임시 파일에 쓴 뒤 교체한다(쓰다 멈춰도 기존 파일이 남는다). 행은 `(video_id, pass, EVENTS 순서)`로 정렬.
+    - `read(video_id: str | None = None, pass_no: int | None = None) -> list[PointLabel]`: 파일이 없으면 빈 목록. 형식이 맞지 않는 행이 있으면 줄 번호가 담긴 `ValueError`.
+    - `missing_events(video_id: str, completion: str, pass_no: int) -> tuple[str, ...]`: 필수 event 중 그 pass에 기록이 없는 것. ignore event는 포함하지 않는다.
+  - `shuffled_order(video_ids: Sequence[str], seed: int) -> list[str]`: 같은 seed면 같은 순서이고 입력의 순열.
+  - `LabelingSession(video_path: Path, video_id: str, store: PointLabelStore, pass_no: int, completion: str)`:
+    - `frame_count: int`(생성 시 `count_frames`), `frame: int`(현재, 0에서 시작)
+    - `goto(frame: int) -> None`: 범위 밖이면 `ValueError`. `step(delta: int) -> None`: 첫·마지막 프레임에서 멈춘다(오류 없음).
+    - `record(event: str) -> None`: 현재 프레임을 `store.add`로 기록.
+    - `visible_labels() -> list[PointLabel]`: 이 세션의 pass 기록만. pass 2 세션에는 pass 1 기록이 보이지 않는다.
+    - `view() -> tuple[np.ndarray, list[str]]`: 현재 프레임 배열(그린 글자 없이 원본)과 안내 문구(`frame i / n`, 이 pass에서 기록한 event와 프레임, 누락된 필수 event, ignore event).
+    - `show() -> None`: `ipywidgets`로 슬라이더, 앞뒤 버튼, event 선택, 기록 버튼을 만들어 표시한다. 이미지는 `cv2.imencode`로 메모리에서만 인코딩해 `ipywidgets.Image`에 넣고 파일로 저장하지 않는다. 위젯 연결(콜백)은 모두 이 메서드 안에서만 만든다.
 
-- [ ] **Step 1: 실패하는 테스트 작성** (합성 영상과 합성 좌표만 사용. 위젯 UI가 아니라 메서드를 검증한다).
+- [ ] **Step 1: 실패하는 테스트 작성** (합성 영상과 합성 숫자만 사용. 위젯 UI가 아니라 메서드를 검증한다. 실제 사람이 나온 영상은 쓰지 않는다).
   - `test_recorded_point_is_saved_and_read_back_equal`
-  - `test_recording_same_event_again_overwrites`
+  - `test_recording_same_video_event_pass_overwrites`
+  - `test_pass_one_and_pass_two_are_kept_separately_even_for_same_frame`
+  - `test_pass_one_cannot_be_added_or_changed_after_pass_two_exists_for_that_video`
+  - `test_pass_one_of_another_video_is_unaffected_by_pass_two`
   - `test_unknown_event_raises_value_error`
+  - `test_pass_other_than_one_or_two_raises_value_error`
   - `test_frame_outside_video_raises_value_error`
-  - `test_pass_two_hides_pass_one_labels`
+  - `test_half_video_rejects_catch_and_finish`
+  - `test_required_events_full_and_half` / `test_ignored_events_full_and_half` / `test_unknown_completion_raises_value_error`
+  - `test_missing_events_lists_only_required_events_without_a_record`
+  - `test_malformed_row_raises_value_error_with_line_number`
+  - `test_failed_add_leaves_existing_file_unchanged`
   - `test_shuffled_order_is_deterministic_for_seed_and_a_permutation`
-  - `test_step_clamps_at_first_and_last_frame`
-  - `test_session_writes_no_image_file`
-- [ ] **Step 2: 실패 확인.**
-- [ ] **Step 3: 구현.** `ipywidgets`의 슬라이더와 버튼은 `LabelingSession.show()` 안에서만 만든다.
+  - `test_step_clamps_at_first_and_last_frame` / `test_goto_out_of_range_raises_value_error`
+  - `test_pass_two_session_hides_pass_one_labels`
+  - `test_view_text_reports_missing_and_ignored_events`
+  - `test_session_and_store_write_no_image_file` (CSV 외에 새 파일이 없음)
+  - `tests/test_notebook_hygiene.py`의 5개(Task 9의 목록): `test_no_function_or_class_definitions_in_notebooks`, `test_no_test_or_assert_code_in_notebooks`, `test_notebook_code_cells_are_short`, `test_notebooks_have_no_stored_outputs`, `test_test_suite_never_executes_notebooks`
+- [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_labeling.py tests/test_notebook_hygiene.py -v` → FAIL. 위생 테스트는 노트북 추가 전에 일부러 `def`가 든 임시 노트북으로 실패를 한 번 확인하고 지운다.
+- [ ] **Step 3: 구현.** `ipywidgets`는 `show()` 안에서 가져온다(위젯 없이도 나머지가 동작하도록).
 - [ ] **Step 4: 통과 확인.**
-- [ ] **Step 5: 노트북 작성.** `tutorials/label_points.ipynb`는 영상 id와 pass 번호를 넣고 `LabelingSession(...).show()`를 호출하는 셀만 갖는다. 저장된 출력이 없어야 한다. 노트북이 생기면 Task 9의 위생 검사와 `nbstripout`(pre-commit)을 이 Task에서 함께 적용한다.
-- [ ] **Step 6: 커밋.**
+- [ ] **Step 5: 노트북 작성.** `tutorials/label_points.ipynb`는 마크다운 안내 셀과, 영상 id·경로·pass 번호·completion을 넣고 `LabelingSession(...).show()`를 호출하는 셀만 갖는다. 저장된 출력이 없다. `.pre-commit-config.yaml`에 `nbstripout` 훅을 둔다. 노트북은 실행하지 않는다(테스트가 실행하지 않는다).
+- [ ] **Step 6: `data/README.md`에 한 단락 추가.** 라벨 파일 위치(`data/annotations/point_labels.csv`), 열, 덮어쓰기와 pass 규칙, half 영상 규칙.
+- [ ] **Step 7: 커밋.**
 
-**이 Task에서 제외:** 관절 점 라벨(#9), 점 라벨 두 번 찍기 결과의 비교 그림(형식 확정 후 별도 Task), 라벨 도구 선택(#8의 방식 A, B, C 중 C로 진행하는 것은 동료의 제안이다).
+**이 Task에서 제외:** 관절 점 라벨(#9), 두 번 찍은 결과의 비교 그림과 편차 계산(시범 라벨링 뒤 별도 Task), 노트북 자동 실행.
 
 ### Task 5d: 영상 시간 간격 표 (이슈 #10)
 
@@ -416,19 +447,15 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 ### Task 9: 노트북 위생 검사와 입문 튜토리얼
 
 **Files:**
-- Create: `tests/test_notebook_hygiene.py`, `tutorials/01_detection_quickstart.py`, `tutorials/01_detection_quickstart.ipynb`
+- Create: `tutorials/01_detection_quickstart.py`, `tutorials/01_detection_quickstart.ipynb`
+- 노트북 위생 검사(`tests/test_notebook_hygiene.py`)는 Task 5c에서 만들었다. 이 Task는 새 노트북이 그 검사를 통과하는지만 확인한다.
 
 **Interfaces:**
 - Consumes: `detect_video`, `load_ultralytics_model`, `DetectorConfig`, `read_detections_csv`.
 
-- [ ] **Step 1: 실패하는 테스트 작성** `tests/test_notebook_hygiene.py`. `tutorials/`와 저장소의 모든 `.ipynb`에 대해 다음을 확인한다.
-  - `test_no_function_or_class_definitions_in_notebooks`: 코드 셀에 `def`, `class`, `lambda`가 없다.
-  - `test_no_test_or_assert_code_in_notebooks`: `assert`, `unittest`, `pytest` 문자열이 없다.
-  - `test_notebook_code_cells_are_short`: 한 셀 15줄 이하.
-  - `test_notebooks_have_no_stored_outputs`: 저장된 출력이 없다.
-  - `test_test_suite_never_executes_notebooks`: `tests/` 아래 파일이 `nbconvert`, `nbclient`, `ExecutePreprocessor`를 가져오지 않는다.
-- [ ] **Step 2: 실패 확인.** 노트북이 없는 상태에서는 통과하므로, 튜토리얼 노트북 추가 전에 일부러 `def`가 든 임시 노트북으로 실패를 한 번 확인하고 지운다.
+- [ ] **Step 1: 위생 검사 확인.** `tests/test_notebook_hygiene.py`(Task 5c에서 작성)가 `tutorials/`와 저장소의 모든 `.ipynb`에 적용된다: 코드 셀에 `def`, `class`, `lambda` 없음, `assert`, `unittest`, `pytest` 문자열 없음, 한 셀 15줄 이하, 저장된 출력 없음, `tests/`가 노트북을 실행하는 라이브러리를 가져오지 않음.
+- [ ] **Step 2:** (Task 5c로 이동. 이 Task에서는 건너뛴다.)
 - [ ] **Step 3: 튜토리얼 작성.** `.py`는 "설정 → 영상 하나에 탐지 → 박스 그리기 → 결과 읽기" 순서로 `src/`를 불러 쓰기만 한다. 노트북은 같은 흐름을 셀로 나눈 얇은 버전이고, 설명은 마크다운 셀에 적는다.
-- [ ] **Step 4: 통과 확인.** Run: `uv run pytest tests/test_notebook_hygiene.py -v` → 5 passed.
-- [ ] **Step 5: 전체 실행.** Run: `uv run pytest -v` → 전부 통과. Run: `uv run python tutorials/01_detection_quickstart.py` → 영상 하나에서 박스가 그려진 이미지가 저장된다.
+- [ ] **Step 4: 통과 확인.** Run: `uv run pytest tests/test_notebook_hygiene.py -v` → 새 노트북을 포함해 통과.
+- [ ] **Step 5: 전체 실행.** Run: `uv run pytest -v` → 전부 통과. Run: `uv run python tutorials/01_detection_quickstart.py` → 영상 하나의 탐지 결과를 읽어 개수와 좌표를 출력한다. 이미지를 파일로 저장하지 않는다(#11). 박스 확인은 Task 5b의 `render_label_frame`이 돌려준 배열을 화면에 표시한다.
 - [ ] **Step 6: 커밋.**
