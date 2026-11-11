@@ -251,6 +251,54 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 
 **이 Task에서 제외:** 관절 점 라벨(#9), 점 라벨 두 번 찍기 결과의 비교 그림(형식 확정 후 별도 Task), 라벨 도구 선택(#8의 방식 A, B, C 중 C로 진행하는 것은 동료의 제안이다).
 
+### Task 5d: 영상 시간 간격 표 (이슈 #10)
+
+**배경:** 54개 영상의 해상도, 프레임 수, 프레임 간격(최소·중앙값·최대), 첫 프레임 시각, 시간 이상 표시(`timestamp_note`), 이상 간격의 프레임 번호를 표 하나로 남긴다. 동료(도메인 담당)가 이상 간격의 위치를 보고 영상 포함 여부를 판단한다. 표에는 영상 id와 숫자만 들어가므로 개인정보가 없고 `data/metadata/`에서 git이 추적한다. 아래 기준값은 잠정이며 동료가 확인한다.
+
+**Files:**
+- Modify: `src/wl_snatch/frames.py` (`raw_frame_times_ms`, `frame_size` 추가, `frame_times_ms`가 `raw_frame_times_ms`를 쓰도록 정리)
+- Create: `src/wl_snatch/video_timing.py`, `scripts/video_timing_table.py`
+- Test: `tests/test_video_timing.py`, `tests/test_frames.py`에 추가
+- 산출물: `data/metadata/video_timing.csv`
+
+**Interfaces:**
+- Consumes: `frames.py`의 순차 디코딩 규칙. `data/metadata/videos.csv`의 `video_id`, `path` 열(`path`는 저장소 루트 기준).
+- Produces (`frames.py`):
+  - `raw_frame_times_ms(video_path: Path) -> list[float]`: 디코더가 보고한 시각(ms)을 이동 없이 돌려준다. 모든 시각이 같으면(프레임 2개 이상) `frame_times_ms`와 같은 `ValueError`.
+  - `frame_size(video_path: Path) -> tuple[int, int]`: 첫 디코딩 프레임의 `(width, height)`. 프레임이 없으면 영상 이름이 담긴 `ValueError`.
+- Produces (`video_timing.py`):
+  - `TimingRow` frozen dataclass: `video_id: str`, `width: int | None`, `height: int | None`, `frames: int | None`, `fps_from_median_gap: float | None`, `gap_min_ms: float | None`, `gap_median_ms: float | None`, `gap_max_ms: float | None`, `first_frame_ms: float | None`, `timestamp_note: str`, `irregular_gap_frames: tuple[int, ...]`.
+  - `analyze_timing(video_id: str, width: int, height: int, raw_times_ms: Sequence[float], offset_tolerance_ms: float = 0.5, gap_tolerance_ms: float = 2.5, gap_tolerance_fraction: float = 0.10) -> TimingRow`
+    - 간격 `gap[g] = t[g+1] - t[g]`. 중앙값에서 `max(gap_tolerance_ms, gap_tolerance_fraction * median)`를 넘게 벗어난 간격은 이상이며, **프레임 번호 `g`(프레임 g와 g+1 사이)를 `irregular_gap_frames`에 기록한다.**
+    - `first_frame_ms = raw_times_ms[0]`이고 `offset_tolerance_ms`보다 크면 `first_frame_offset`.
+    - `timestamp_note`: 해당하는 값을 `;`로 이어 쓴다(`first_frame_offset`, `irregular_gap` 순). 없으면 빈 문자열.
+    - 프레임이 2개 미만이면 간격 관련 값은 `None`, `timestamp_note`는 `N/A: fewer than 2 frames`.
+    - `fps_from_median_gap = 1000 / gap_median_ms`.
+  - `unreadable_row(video_id: str, reason: str) -> TimingRow`: 숫자 필드는 `None`, `timestamp_note`는 `N/A: <reason>`.
+  - `write_timing_csv(rows: Sequence[TimingRow], path: Path) -> None`: 열 순서 `video_id,width,height,frames,fps_from_median_gap,gap_min_ms,gap_median_ms,gap_max_ms,first_frame_ms,timestamp_note,irregular_gap_frames`. `None`은 빈 칸, `irregular_gap_frames`는 `;`로 이은 번호. 숫자는 소수 둘째 자리로 쓴다. 부모 폴더는 만든다.
+- 이 모듈과 스크립트는 이미지를 만들거나 저장하지 않는다. 출력은 CSV와 텍스트 요약뿐이다.
+
+- [ ] **Step 1: 실패하는 테스트 작성** (시각은 합성 숫자 목록으로 만든다. 실제 영상은 쓰지 않는다. `frames.py` 추가분만 `make_video` 합성 영상을 쓴다).
+  - `test_constant_30fps_has_no_note_and_matches_statistics`
+  - `test_first_frame_offset_is_noted`
+  - `test_small_first_frame_time_within_tolerance_is_not_noted`
+  - `test_irregular_gap_is_noted_with_frame_number` (간격 하나가 8.7ms인 24fps 목록: 해당 `g`가 기록됨)
+  - `test_timebase_rounding_at_60fps_is_not_flagged` (16.7, 16.7, 18.3 간격은 이상이 아님)
+  - `test_large_deviation_at_60fps_is_flagged` (5.0ms 간격은 이상)
+  - `test_notes_join_both_with_semicolon_in_fixed_order`
+  - `test_fewer_than_two_frames_gives_na_note`
+  - `test_unreadable_row_has_na_note_and_empty_numbers`
+  - `test_write_timing_csv_header_and_values` (헤더 순서, `None`은 빈 칸, 번호는 `;`, 소수 둘째 자리)
+  - `test_frame_size_returns_width_height_of_decoded_frame` / `test_frame_size_empty_video_raises_value_error` (frames 테스트)
+  - `test_raw_frame_times_not_shifted_and_frame_times_are_shifted_copy` (frames 테스트)
+- [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_video_timing.py tests/test_frames.py -v` → FAIL.
+- [ ] **Step 3: 구현.** `scripts/video_timing_table.py --data-dir data --out data/metadata/video_timing.csv`는 `videos.csv`의 영상마다 행을 만든다. 읽을 수 없는 영상은 `unreadable_row`로 남기고 중단하지 않는다. 끝에 영상 수, `timestamp_note`별 개수, 읽지 못한 영상 수를 텍스트로 출력한다.
+- [ ] **Step 4: 통과 확인.** `uv run pytest -q` 전체 통과, `uv run ruff check`.
+- [ ] **Step 5: 실제 실행.** 스크립트를 로컬 54개 영상에 실행해 `data/metadata/video_timing.csv`를 만든다. 표에서 다음을 보고서에 적는다: `timestamp_note`별 영상 수, 이상 간격이 있는 영상과 번호, 앞서 `ffprobe`로 확인한 영상(`a05_sn_f_01`, `b00_sn_f_01`, `c01_sn_f_02`, `c04_sn_f_03`)과 이 표의 결과가 일치하는지. 일치하지 않으면 사유를 적는다.
+- [ ] **Step 6: 커밋.** 표 CSV 포함. 이미지 파일은 만들지 않는다.
+
+**기준값(잠정):** 간격 이상 허용 = `max(2.5ms, 중앙값의 10%)`, 첫 프레임 시각 허용 = 0.5ms. 24fps와 30fps의 정상 흔들림은 1.7ms 이내이고 60fps 영상의 타임베이스 반올림 단위가 약 1.67ms라는 사전 측정에 맞춘 값이다. 동료가 확인한다.
+
 ### Task 6: 탐지 평가기
 
 **Files:**
