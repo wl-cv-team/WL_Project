@@ -14,7 +14,7 @@ b01_sn_f_01,b01_sn_f_01.mp4,data/raw/videos/b01_sn_f_01.mp4,B,b01,sn,f,1,2099931
 b01_sn_f_02,b01_sn_f_02.mp4,data/raw/videos/b01_sn_f_02.mp4,B,b01,sn,f,2,2222676,27.819109,143,5.140352,1080,1920,ok,unknown,unknown,unknown,model_selection_pilot,left
 b01_sn_f_03,b01_sn_f_03.mp4,data/raw/videos/b01_sn_f_03.mp4,B,b01,sn,f,3,2049610,28.173581,133,4.720735,1080,1920,ok,unknown,unknown,unknown,model_selection_pilot,left
 b02_sn_f_01,b02_sn_f_01.mp4,data/raw/videos/b02_sn_f_01.mp4,B,b02,sn,f,1,640519,24.001746,95,3.958045,720,1280,ok,unknown,unknown,unknown,training_development,right
-b02_sn_h_02,b02_sn_h_02.mp4,data/raw/videos/b02_sn_h_02.mp4,B,b02,sn,h,2,684790,24.0,116,4.833333,720,1280,ok,unknown,unknown,unknown,training_development,
+b02_sn_h_02,b02_sn_h_02.mp4,data/raw/videos/b02_sn_h_02.mp4,B,b02,sn,h,2,684790,24.0,116,4.833333,720,1280,ok,unknown,unknown,unknown,training_development,right
 b03_sn_f_01,b03_sn_f_01.mp4,data/raw/videos/b03_sn_f_01.mp4,B,b03,sn,f,1,2044094,27.681998,131,4.732317,1080,1920,ok,yes,unknown,unknown,training_development,left
 b03_sn_f_02,b03_sn_f_02.mp4,data/raw/videos/b03_sn_f_02.mp4,B,b03,sn,f,2,2159986,28.479931,141,4.950855,1080,1920,ok,unknown,unknown,unknown,training_development,left
 b03_sn_f_03,b03_sn_f_03.mp4,data/raw/videos/b03_sn_f_03.mp4,B,b03,sn,f,3,1988798,26.974222,114,4.226257,1080,1920,ok,unknown,unknown,unknown,training_development,left
@@ -41,7 +41,7 @@ c05_sn_f_01,c05_sn_f_01.mp4,data/raw/videos/c05_sn_f_01.mp4,C,c05,sn,f,1,2060125
 c05_sn_f_02,c05_sn_f_02.mp4,data/raw/videos/c05_sn_f_02.mp4,C,c05,sn,f,2,1677967,28.963795,112,3.866897,1080,1920,ok,unknown,unknown,unknown,training_development,left
 c05_sn_f_03,c05_sn_f_03.mp4,data/raw/videos/c05_sn_f_03.mp4,C,c05,sn,f,3,1946764,27.740806,119,4.28971,1080,1920,ok,unknown,unknown,unknown,training_development,left
 c05_sn_f_04,c05_sn_f_04.mp4,data/raw/videos/c05_sn_f_04.mp4,C,c05,sn,f,4,1838932,27.25742,117,4.292409,1080,1920,ok,unknown,unknown,unknown,training_development,left
-c05_sn_f_05,c05_sn_f_05.mp4,data/raw/videos/c05_sn_f_05.mp4,C,c05,sn,f,5,1805520,26.997483,111,4.111494,1080,1920,ok,unknown,unknown,unknown,training_development,
+c05_sn_f_05,c05_sn_f_05.mp4,data/raw/videos/c05_sn_f_05.mp4,C,c05,sn,f,5,1805520,26.997483,111,4.111494,1080,1920,ok,unknown,unknown,unknown,training_development,left
 c06_sn_f_01,c06_sn_f_01.mp4,data/raw/videos/c06_sn_f_01.mp4,C,c06,sn,f,1,1588155,28.27726,102,3.607139,1080,1920,ok,unknown,unknown,unknown,training_development,left
 c06_sn_f_02,c06_sn_f_02.mp4,data/raw/videos/c06_sn_f_02.mp4,C,c06,sn,f,2,1503912,28.151302,94,3.3391,1080,1920,ok,unknown,unknown,unknown,training_development,left
 c06_sn_f_03,c06_sn_f_03.mp4,data/raw/videos/c06_sn_f_03.mp4,C,c06,sn,f,3,1482692,28.039824,95,3.388038,1080,1920,ok,unknown,unknown,unknown,training_development,left
