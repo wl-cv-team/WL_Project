@@ -31,6 +31,8 @@ git이 추적하는 것은 이 README와 아래 세 폴더의 표와 텍스트 �
 
 `tutorials/label_points.ipynb`로 도메인 담당이 영상마다 인상 구간 경계 프레임을 직접 찍은 결과입니다. 열은 `video_id, event, frame, pass`이고, event는 `ready, transition, drive, catch, finish`, pass는 1 또는 2입니다. `frame`은 디코딩 순서의 0부터 시작하는 번호입니다(#10). `(video_id, event, pass)`가 모두 같을 때만 새 값이 옛 값을 대체하고, pass 1과 pass 2는 같은 프레임이어도 둘 다 보존합니다. 같은 영상에 pass 2 기록이 하나라도 있으면 그 영상의 pass 1은 추가도 수정도 할 수 없습니다. `completion`이 `h`인 영상은 `ready`, `transition`, `drive`만 필수이고 `catch`, `finish`는 "ignore"입니다. ignore는 파일에 행으로 남기지 않고 `completion` 값에서 도출하므로 기록이 없는 "누락"과 구별되며, 이 두 event를 기록하려 하면 오류입니다.
 
+[`finish` 판단 기준과 재판독 결과](../docs/finish-labeling.md)를 참고하세요. 추가 검증 영상 두 편은 `finish`만 기록했습니다.
+
 ## 원판 박스 라벨 `annotations/plate_boxes/` (이슈 #2)
 
 `tutorials/label_plates.ipynb`로 도메인 담당이 프레임마다 카메라에 가까운 쪽 원판 하나의 보이는 외곽에 박스를 그린 결과입니다. 일부가 가려졌거나 화면 밖으로 잘렸으면 보이는 부분만 감싸고, 가려진 부분을 추정해 넓히지 않습니다. 라벨 하나당 파일 하나이고 이름은 `<video_id>_f<프레임>.txt`입니다(프레임은 디코딩 순서의 0부터, #10). 내용은 한 줄 `class cx cy w h`(YOLO, 0~1 정규화, 소수 여섯째 자리)이고 클래스가 하나이므로 `class`는 0입니다. 빈 파일은 "확인했으나 가까운 쪽 원판 없음"이고, 파일이 없으면 "아직 라벨링 안 함"입니다. 사유 열은 두지 않습니다. 같은 프레임에 다시 저장하면 새 값이 옛 값을 대체합니다. 추출 범위 예외가 있는 영상만 `annotations/plate_frame_ranges.csv`(열 `video_id, start_frame, end_frame, reason`, 양 끝 프레임 포함)에 적고, 그 영상의 범위 밖 프레임에는 박스도 빈 파일도 만들 수 없습니다. 현재는 `b02_sn_h_02`의 0~53번 프레임(`plate_leaves_frame`) 한 줄입니다. 화면에 표시하는 이미지 폭은 노트북 설정 셀의 `display_width`로 정하고, 저장되는 좌표는 정규화된 값이므로 이 폭에 따라 달라지지 않습니다.
