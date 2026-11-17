@@ -355,7 +355,7 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 - Modify: `src/wl_snatch/label_viewer.py`(`draw_overlay`에 색 인자 추가), `tests/test_label_viewer.py`, `tests/test_scaffold.py`(`plate_boxes/*.txt`가 추적되는지), `pyproject.toml`과 `uv.lock`(`ipyevents` 추가), `data/README.md`(라벨 위치와 규칙 한 단락)
 
 **Interfaces:**
-- Consumes: `frames.read_frame`, `frames.count_frames`, `label_viewer.NormBox`, `label_viewer.draw_overlay`, `labeling.guidance_html`.
+- Consumes: `frames.read_frame`, `frames.count_frames`, `frames.frame_size`(원본 픽셀 표시용), `label_viewer.NormBox`, `label_viewer.draw_overlay`, `label_viewer.flag_box_issues`, `labeling.guidance_html`.
 - Produces (`label_viewer.py`): `draw_overlay(frame, overlay, color=BOX_COLOR_BGR)`. 기본값일 때 동작은 그대로다.
 - Produces (`plate_boxes.py`):
   - `corners_to_norm_box(x1: float, y1: float, x2: float, y2: float, width: float, height: float) -> NormBox`: 모서리 순서는 상관없다. 좌표를 `[0, width] x [0, height]`로 자른 뒤 정규화한다. 자른 뒤 너비나 높이가 0 이하이면 `ValueError`. 화면 좌표(`width`, `height`는 화면에 보이는 크기)와 원본 픽셀 좌표(원본 크기)에 같은 함수를 쓰며, 비례하는 값이면 같은 결과가 나온다.
@@ -372,7 +372,14 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
     - `draft: NormBox | None`, `set_draft_from_corners(x1, y1, x2, y2, width, height) -> None`(`corners_to_norm_box`로 계산해 `draft`에 둔다), `clear_draft() -> None`. 프레임을 옮기면 `draft`는 지워진다.
     - `save_box() -> None`: `draft`를 저장. `draft`가 없으면 `ValueError`. `save_empty() -> None`.
     - `view() -> tuple[np.ndarray, list[str]]`: 현재 프레임에 저장된 박스(녹색)와 `draft`(노란색)를 그린 배열, 안내 문구(`frame i / n`, 이 프레임의 `status`, 범위 예외가 있으면 허용 범위와 사유, 박스 크기 경고는 `flag_box_issues`).
-    - `show() -> None`: `ipywidgets`로 `Image`, 프레임 슬라이더, 앞뒤 버튼, 좌상단·우하단 슬라이더 4개(정규화 0~1), `save box`와 `save empty` 버튼을 만든다. `ipyevents.Event`를 `Image`에 붙여 `mousedown`과 `mouseup`을 받고, `relativeX/relativeY`와 `boundingRectWidth/boundingRectHeight`로 `set_draft_from_corners`를 호출한다. 슬라이더와 드래그는 같은 `draft`를 갱신한다. `ipywidgets`와 `ipyevents`는 `show()` 안에서 가져온다. 이미지는 `cv2.imencode`로 메모리에서만 인코딩한다.
+    - `pointer_text: str`: 마우스 위치 안내 한 줄. 마우스가 이미지 위에 없으면 빈 문자열.
+    - `handle_pointer_event(event: Mapping[str, Any]) -> None`: `ipyevents`가 넘기는 dict를 처리한다. 필요한 키는 `type`, `relativeX`, `relativeY`, `boundingRectWidth`, `boundingRectHeight`. `boundingRectWidth`나 `boundingRectHeight`가 0 이하이면 무시한다.
+      - `mousemove`: `pointer_text`를 갱신한다(`x`, `y`는 0~1 비율, 원본 픽셀, 소수 셋째 자리와 정수). 드래그 상태는 바꾸지 않는다.
+      - `mousedown`: 시작점을 기억한다.
+      - `mouseup`: 시작점이 있으면 `set_draft_from_corners(시작, 끝, boundingRectWidth, boundingRectHeight)`를 호출하고 시작점을 지운다. 시작점이 없으면 무시한다.
+      - 그 밖의 `type`은 무시한다.
+    - `show() -> None`: `ipywidgets`로 `Image`(화면 폭 360px 고정, 높이는 비율대로), 프레임 슬라이더, 앞뒤 버튼, 좌상단·우하단 슬라이더 4개(정규화 0~1), `save box`와 `save empty` 버튼, `pointer_text`를 보여 줄 `HTML` 한 줄을 만든다. `ipyevents.Event`는 아래 구성으로 `Image`에 붙이고 `on_dom_event`에 `handle_pointer_event`를 연결한다: `watched_events=["mousedown", "mouseup", "mousemove"]`, `prevent_default_action=True`, `throttle_or_debounce="throttle"`, `wait=50`. 슬라이더와 드래그는 같은 `draft`를 갱신한다. `ipywidgets`와 `ipyevents`는 `show()` 안에서 가져온다. 이미지는 `cv2.imencode`로 메모리에서만 인코딩한다.
+      - 이 구성은 합성 이미지 시험 노트북으로 실제 Chrome(헤드리스, 화면 배율 1배와 2배)에서 검증했다: 호버, 모서리 클릭, 기준 사각형 드래그, 스크롤한 상태의 드래그가 3개 해상도(720×1280, 1080×1920, 404×720)에서 모두 맞았고 드래그 중 이미지 끌기와 텍스트 선택은 발생하지 않았다. 다른 브라우저는 시험하지 않았고 도메인 담당이 필요 없다고 했다(2026-11-17).
 
 - [ ] **Step 1: 실패하는 테스트 작성** (합성 영상과 합성 숫자만. 위젯과 브라우저가 아니라 메서드를 검증한다. 실제 사람이 나온 영상은 쓰지 않는다).
   - `test_corners_to_norm_box_matches_hand_computed_values` / `test_corner_order_does_not_matter`
@@ -392,6 +399,12 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
   - `test_session_step_clamps_and_goto_out_of_range_raises`
   - `test_session_move_clears_draft`
   - `test_session_save_without_draft_raises`
+  - `test_pointer_drag_events_set_draft_equal_to_corner_computation` (mousedown, mousemove, mouseup 순서의 모의 이벤트. 화면 360×640과 원본 비례 크기에서 같은 `draft`)
+  - `test_pointer_mouseup_without_mousedown_is_ignored`
+  - `test_pointer_mousemove_updates_text_but_not_draft`
+  - `test_pointer_event_with_zero_bounding_rect_is_ignored`
+  - `test_pointer_unknown_event_type_is_ignored`
+  - `test_pointer_text_shows_fractions_and_original_pixels` (원본 크기 기준 픽셀)
   - `test_session_view_draws_saved_box_green_and_draft_yellow` (픽셀 값으로 확인)
   - `test_session_view_text_reports_status_and_range_exception`
   - `test_session_and_store_write_no_image_file` (`.txt` 외 새 파일 없음)
