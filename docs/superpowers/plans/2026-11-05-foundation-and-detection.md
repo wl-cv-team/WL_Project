@@ -367,7 +367,7 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
     - `save_box(video_id, frame, box: NormBox, *, frame_count: int) -> None` / `save_empty(video_id, frame, *, frame_count: int) -> None`: `frame`이 `[0, frame_count)` 밖이거나, 그 영상에 범위 예외가 있고 `[start_frame, end_frame]` 밖이거나, `video_id`가 비었거나, `frame`이 int가 아니면(`bool` 포함) `ValueError`(메시지에 video_id와 값). 파일은 임시 파일에 쓴 뒤 교체한다. 실패하면 기존 파일이 그대로다. `boxes_dir`는 없으면 만든다.
     - `status(video_id, frame) -> str`: `"unlabeled"`(파일 없음), `"empty"`(0바이트 또는 공백만), `"box"`.
     - `read(video_id, frame) -> NormBox | None`: 박스가 있으면 박스, 빈 파일이나 파일 없음이면 `None`. 줄이 둘 이상이거나 형식이 맞지 않으면 파일 이름이 담긴 `ValueError`.
-  - `BoxLabelingSession(video_path: Path, video_id: str, store: PlateBoxStore)`:
+  - `BoxLabelingSession(video_path: Path, video_id: str, store: PlateBoxStore, *, display_width: int = DISPLAY_WIDTH)` (`DISPLAY_WIDTH = 360`, 양의 int가 아니면 ValueError):
     - `frame_count: int`, `frame: int`(0에서 시작), `goto(frame)`(범위 밖이면 `ValueError`), `step(delta)`(양 끝에서 멈춤).
     - `draft: NormBox | None`, `set_draft_from_corners(x1, y1, x2, y2, width, height) -> None`(`corners_to_norm_box`로 계산해 `draft`에 둔다), `clear_draft() -> None`. 프레임을 옮기면 `draft`는 지워진다.
     - `save_box() -> None`: `draft`를 저장. `draft`가 없으면 `ValueError`. `save_empty() -> None`.
@@ -378,7 +378,7 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
       - `mousedown`: 시작점을 기억한다.
       - `mouseup`: 시작점이 있으면 `set_draft_from_corners(시작, 끝, boundingRectWidth, boundingRectHeight)`를 호출하고 시작점을 지운다. 시작점이 없으면 무시한다.
       - 그 밖의 `type`은 무시한다.
-    - `show() -> None`: `ipywidgets`로 `Image`(화면 폭 360px 고정, 높이는 비율대로), 프레임 슬라이더, 앞뒤 버튼, 좌상단·우하단 슬라이더 4개(정규화 0~1), `save box`와 `save empty` 버튼, `pointer_text`를 보여 줄 `HTML` 한 줄을 만든다. `ipyevents.Event`는 아래 구성으로 `Image`에 붙이고 `on_dom_event`에 `handle_pointer_event`를 연결한다: `watched_events=["mousedown", "mouseup", "mousemove"]`, `prevent_default_action=True`, `throttle_or_debounce="throttle"`, `wait=50`. 슬라이더와 드래그는 같은 `draft`를 갱신한다. `ipywidgets`와 `ipyevents`는 `show()` 안에서 가져온다. 이미지는 `cv2.imencode`로 메모리에서만 인코딩한다.
+    - `show() -> None`: `ipywidgets`로 `Image`(화면 폭은 `display_width`, 기본 360px, 높이는 `round(display_width * 높이 / 폭)`), 프레임 슬라이더, 앞뒤 버튼, 좌상단·우하단 슬라이더 4개(정규화 0~1), `save box`와 `save empty` 버튼, `pointer_text`를 보여 줄 `HTML` 한 줄을 만든다. `ipyevents.Event`는 아래 구성으로 `Image`에 붙이고 `on_dom_event`에 `handle_pointer_event`를 연결한다: `watched_events=["mousedown", "mouseup", "mousemove"]`, `prevent_default_action=True`, `throttle_or_debounce="throttle"`, `wait=50`. 슬라이더와 드래그는 같은 `draft`를 갱신한다. `ipywidgets`와 `ipyevents`는 `show()` 안에서 가져온다. 이미지는 `cv2.imencode`로 메모리에서만 인코딩한다.
       - 이 구성은 합성 이미지 시험 노트북으로 실제 Chrome(헤드리스, 화면 배율 1배와 2배)에서 검증했다: 호버, 모서리 클릭, 기준 사각형 드래그, 스크롤한 상태의 드래그가 3개 해상도(720×1280, 1080×1920, 404×720)에서 모두 맞았고 드래그 중 이미지 끌기와 텍스트 선택은 발생하지 않았다. 다른 브라우저는 시험하지 않았고 도메인 담당이 필요 없다고 했다(2026-11-17).
 
 - [ ] **Step 1: 실패하는 테스트 작성** (합성 영상과 합성 숫자만. 위젯과 브라우저가 아니라 메서드를 검증한다. 실제 사람이 나온 영상은 쓰지 않는다).

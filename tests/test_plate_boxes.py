@@ -532,3 +532,41 @@ def test_goto_rejects_non_int_frames(make_video, tmp_path):
         with pytest.raises(ValueError):
             session.goto(frame)
     assert session.frame == 0
+
+
+# display_width
+
+
+def test_display_width_defaults_to_360(make_video, tmp_path):
+    session = BoxLabelingSession(make_video(tmp_path / "v.mp4"), VIDEO_ID, make_store(tmp_path))
+    assert session.display_width == 360
+    assert plate_boxes.DISPLAY_WIDTH == 360
+
+
+@pytest.mark.parametrize("bad", ["480", 480.0, True, 0, -360, None])
+def test_display_width_rejects_non_positive_or_non_int(make_video, tmp_path, bad):
+    with pytest.raises(ValueError, match=rf"{VIDEO_ID}.*{bad!r}"):
+        BoxLabelingSession(
+            make_video(tmp_path / "v.mp4"), VIDEO_ID, make_store(tmp_path), display_width=bad
+        )
+
+
+def test_display_width_is_keyword_only(make_video, tmp_path):
+    with pytest.raises(TypeError):
+        BoxLabelingSession(make_video(tmp_path / "v.mp4"), VIDEO_ID, make_store(tmp_path), 480)
+
+
+def test_show_uses_display_width_for_image_size(make_video, tmp_path, monkeypatch):
+    import IPython.display
+    import ipywidgets
+
+    shown = []
+    monkeypatch.setattr(IPython.display, "display", shown.append)
+    video = make_video(tmp_path / "p.mp4", colors=[(255, 0, 0)] * 2, size=(72, 128))
+    session = BoxLabelingSession(video, VIDEO_ID, make_store(tmp_path), display_width=480)
+    session.show()
+    (box,) = shown
+    pictures = [w for w in box.children if isinstance(w, ipywidgets.Image)]
+    assert len(pictures) == 1
+    assert pictures[0].width == "480"
+    assert pictures[0].height == str(round(480 * 128 / 72))

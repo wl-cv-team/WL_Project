@@ -231,10 +231,22 @@ class PlateBoxStore:
 class BoxLabelingSession:
     """Frame navigation, a draft box and saving for one video."""
 
-    def __init__(self, video_path: Path, video_id: str, store: PlateBoxStore):
+    def __init__(
+        self,
+        video_path: Path,
+        video_id: str,
+        store: PlateBoxStore,
+        *,
+        display_width: int = DISPLAY_WIDTH,
+    ):
+        if type(display_width) is not int or display_width <= 0:
+            raise ValueError(
+                f"{video_id}: display_width {display_width!r} is not an integer above 0"
+            )
         self.video_path = Path(video_path)
         self.video_id = video_id
         self.store = store
+        self.display_width = display_width
         self.frame_count = count_frames(self.video_path)
         self.frame = 0
         self.draft: NormBox | None = None
@@ -349,7 +361,9 @@ class BoxLabelingSession:
 
         width, height = frame_size(self.video_path)
         picture = ipywidgets.Image(
-            format="jpeg", width=DISPLAY_WIDTH, height=round(DISPLAY_WIDTH * height / width)
+            format="jpeg",
+            width=self.display_width,
+            height=round(self.display_width * height / width),
         )
         text = ipywidgets.HTML()
         message = ipywidgets.HTML()
