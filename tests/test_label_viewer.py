@@ -132,3 +132,17 @@ def test_no_image_file_is_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     before = listing()
     render_label_frame(video, 1, Overlay(boxes=((0.5, 0.5, 0.3, 0.3),), skipped=()))
     assert listing() == before
+
+
+def test_draw_overlay_default_color_unchanged():
+    overlay = Overlay(boxes=((0.5, 0.5, 0.4, 0.4),), skipped=())
+    default = draw_overlay(blank(), overlay)
+    assert np.array_equal(default, draw_overlay(blank(), overlay, BOX_COLOR_BGR))
+    assert tuple(default[50, 60]) == BOX_COLOR_BGR == (0, 255, 0)
+
+
+def test_draw_overlay_uses_given_color():
+    overlay = Overlay(boxes=((0.5, 0.5, 0.4, 0.4),), skipped=())
+    result = draw_overlay(blank(), overlay, (0, 255, 255))
+    assert tuple(result[50, 60]) == (0, 255, 255)
+    assert tuple(result[30, 100]) == (0, 255, 255)

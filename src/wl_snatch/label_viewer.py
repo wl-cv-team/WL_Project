@@ -47,8 +47,10 @@ def flag_box_issues(
     return issues
 
 
-def draw_overlay(frame: np.ndarray, overlay: Overlay) -> np.ndarray:
-    """Copy of `frame` with the boxes drawn. The input array is not changed."""
+def draw_overlay(
+    frame: np.ndarray, overlay: Overlay, color: tuple[int, int, int] = BOX_COLOR_BGR
+) -> np.ndarray:
+    """Copy of `frame` with the boxes drawn in `color` (BGR). The input array is not changed."""
     result = frame.copy()
     height, width = result.shape[:2]
     for cx, cy, w, h in overlay.boxes:
@@ -56,7 +58,7 @@ def draw_overlay(frame: np.ndarray, overlay: Overlay) -> np.ndarray:
         y1 = round((cy - h / 2) * height)
         x2 = round((cx + w / 2) * width)
         y2 = round((cy + h / 2) * height)
-        cv2.rectangle(result, (x1, y1), (x2, y2), BOX_COLOR_BGR, BOX_THICKNESS)
+        cv2.rectangle(result, (x1, y1), (x2, y2), color, BOX_THICKNESS)
     return result
 
 

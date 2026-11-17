@@ -330,6 +330,97 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 
 **기준값(잠정):** 간격 이상 허용 = `max(2.5ms, 중앙값의 10%)`, 첫 프레임 시각 허용 = 0.5ms. 24fps와 30fps의 정상 흔들림은 1.7ms 이내이고 60fps 영상의 타임베이스 반올림 단위가 약 1.67ms라는 사전 측정에 맞춘 값이다. 동료가 확인한다.
 
+### Task 5e: 원판 박스 라벨링 노트북 (이슈 #2)
+
+**상태:** 규칙은 도메인 담당이 #2(2026-11-12~13)에서 확정했다. 의존성 `ipyevents` 추가에도 동의했다. 시범 검수 15장(`a01_sn_f_01`, `b01_sn_f_01`, `c02_sn_f_01`의 재판독 반영 후 pass 1 프레임 5장씩)은 도메인 담당이 이 도구로 한다.
+
+**배경:** 도메인 담당이 로컬 영상에서 지정한 프레임을 열고, 카메라에 가까운 원판 하나의 보이는 외곽에 박스를 그린다. 노트북은 호출만 하므로(노트북 규칙) 모든 동작은 `src/`의 클래스가 맡는다. 화면의 이미지는 메모리에서만 인코딩하고 파일로 저장하지 않는다(#11).
+
+**확정된 규칙 (#2):**
+- 박스 대상은 카메라에 가까운 쪽 원판 하나이고, 보이는 외곽만 감싼다. 일부 가려지거나 화면 밖으로 잘렸으면 보이는 부분만 감싸고 화면 경계를 넘지 않게 그린다. 가려진 부분을 추정해 넓히지 않는다.
+- 저장: 라벨 하나당 파일 하나 `data/annotations/plate_boxes/<video_id>_f<프레임>.txt`. 한 줄 `class cx cy w h`(YOLO, 0~1 정규화). 클래스는 하나이므로 `class`는 0.
+- 빈 `.txt`는 "확인했으나 가까운 쪽 원판 없음"이고, 파일이 없으면 "아직 라벨링 안 함"이다. 사유 열은 두지 않는다(#2에서 사유 방식은 합의하지 않았고 빈 파일 방식에만 동의했다).
+- 추출 범위 예외는 `data/annotations/plate_frame_ranges.csv`(열 `video_id,start_frame,end_frame,reason`)에 예외가 있는 영상만 적는다. 범위 밖 프레임에는 박스도 빈 라벨도 만들지 않는다. 이 Task에서 `b02_sn_h_02,0,53,plate_leaves_frame` 한 줄로 파일을 만든다.
+- 프레임 번호는 디코딩 순서 0부터.
+- 입력: 마우스 드래그가 기본이고, 드래그가 작동하지 않을 때를 위해 슬라이더로 좌상단과 우하단을 조정할 수 있어야 한다.
+
+**제 판단으로 정한 것 (컨트롤러 판단, 도메인 담당이 바꿀 수 있다):**
+- 같은 프레임에 다시 저장하면 새 값이 옛 값을 대체한다(박스를 빈 파일로, 빈 파일을 박스로 바꾸는 경우 포함).
+- 박스는 `label_viewer.NormBox`(`cx, cy, w, h`)를 그대로 쓴다. 숫자는 소수 여섯째 자리까지 쓴다.
+- 박스가 화면 경계로 잘린 뒤 너비나 높이가 0 이하이면 저장하지 않고 `ValueError`.
+
+**Files:**
+- Create: `src/wl_snatch/plate_boxes.py`, `tutorials/label_plates.ipynb`, `data/annotations/plate_frame_ranges.csv`
+- Create: `tests/test_plate_boxes.py`
+- Modify: `src/wl_snatch/label_viewer.py`(`draw_overlay`에 색 인자 추가), `tests/test_label_viewer.py`, `tests/test_scaffold.py`(`plate_boxes/*.txt`가 추적되는지), `pyproject.toml`과 `uv.lock`(`ipyevents` 추가), `data/README.md`(라벨 위치와 규칙 한 단락)
+
+**Interfaces:**
+- Consumes: `frames.read_frame`, `frames.count_frames`, `frames.frame_size`(원본 픽셀 표시용), `label_viewer.NormBox`, `label_viewer.draw_overlay`, `label_viewer.flag_box_issues`, `labeling.guidance_html`.
+- Produces (`label_viewer.py`): `draw_overlay(frame, overlay, color=BOX_COLOR_BGR)`. 기본값일 때 동작은 그대로다.
+- Produces (`plate_boxes.py`):
+  - `corners_to_norm_box(x1: float, y1: float, x2: float, y2: float, width: float, height: float) -> NormBox`: 모서리 순서는 상관없다. 좌표를 `[0, width] x [0, height]`로 자른 뒤 정규화한다. 자른 뒤 너비나 높이가 0 이하이면 `ValueError`. 화면 좌표(`width`, `height`는 화면에 보이는 크기)와 원본 픽셀 좌표(원본 크기)에 같은 함수를 쓰며, 비례하는 값이면 같은 결과가 나온다.
+  - `format_yolo_line(box: NormBox) -> str`: `"0 cx cy w h"`, 소수 여섯째 자리, 줄바꿈 없음.
+  - `parse_yolo_line(text: str, source: str) -> NormBox`: 필드가 5개가 아니거나, class가 0이 아니거나, 값이 `[0, 1]` 밖이거나, w나 h가 0 이하이면 `source`가 담긴 `ValueError`.
+  - `FrameRange` frozen dataclass: `start_frame: int`, `end_frame: int`, `reason: str`. `read_frame_ranges(path: Path) -> dict[str, FrameRange]`: 파일이 없으면 빈 dict. 열 이름이 다르거나, 정수가 아니거나, `start_frame > end_frame`이거나, `video_id`가 비었거나 중복이면 줄 번호가 담긴 `ValueError`.
+  - `PlateBoxStore(boxes_dir: Path, ranges_path: Path | None = None)`:
+    - `path_for(video_id: str, frame: int) -> Path`: `<boxes_dir>/<video_id>_f<frame>.txt`.
+    - `save_box(video_id, frame, box: NormBox, *, frame_count: int) -> None` / `save_empty(video_id, frame, *, frame_count: int) -> None`: `frame`이 `[0, frame_count)` 밖이거나, 그 영상에 범위 예외가 있고 `[start_frame, end_frame]` 밖이거나, `video_id`가 비었거나, `frame`이 int가 아니면(`bool` 포함) `ValueError`(메시지에 video_id와 값). 파일은 임시 파일에 쓴 뒤 교체한다. 실패하면 기존 파일이 그대로다. `boxes_dir`는 없으면 만든다.
+    - `status(video_id, frame) -> str`: `"unlabeled"`(파일 없음), `"empty"`(0바이트 또는 공백만), `"box"`.
+    - `read(video_id, frame) -> NormBox | None`: 박스가 있으면 박스, 빈 파일이나 파일 없음이면 `None`. 줄이 둘 이상이거나 형식이 맞지 않으면 파일 이름이 담긴 `ValueError`.
+  - `BoxLabelingSession(video_path: Path, video_id: str, store: PlateBoxStore, *, display_width: int = DISPLAY_WIDTH)` (`DISPLAY_WIDTH = 360`, 양의 int가 아니면 ValueError):
+    - `frame_count: int`, `frame: int`(0에서 시작), `goto(frame)`(범위 밖이면 `ValueError`), `step(delta)`(양 끝에서 멈춤).
+    - `draft: NormBox | None`, `set_draft_from_corners(x1, y1, x2, y2, width, height) -> None`(`corners_to_norm_box`로 계산해 `draft`에 둔다), `clear_draft() -> None`. 프레임을 옮기면 `draft`는 지워진다.
+    - `save_box() -> None`: `draft`를 저장. `draft`가 없으면 `ValueError`. `save_empty() -> None`.
+    - `view() -> tuple[np.ndarray, list[str]]`: 현재 프레임에 저장된 박스(녹색)와 `draft`(노란색)를 그린 배열, 안내 문구(`frame i / n`, 이 프레임의 `status`, 범위 예외가 있으면 허용 범위와 사유, 박스 크기 경고는 `flag_box_issues`).
+    - `pointer_text: str`: 마우스 위치 안내 한 줄. 마우스가 이미지 위에 없으면 빈 문자열.
+    - `handle_pointer_event(event: Mapping[str, Any]) -> None`: `ipyevents`가 넘기는 dict를 처리한다. 필요한 키는 `type`, `relativeX`, `relativeY`, `boundingRectWidth`, `boundingRectHeight`. `boundingRectWidth`나 `boundingRectHeight`가 0 이하이면 무시한다.
+      - `mousemove`: `pointer_text`를 갱신한다(`x`, `y`는 0~1 비율, 원본 픽셀, 소수 셋째 자리와 정수). 드래그 상태는 바꾸지 않는다.
+      - `mousedown`: 시작점을 기억한다.
+      - `mouseup`: 시작점이 있으면 `set_draft_from_corners(시작, 끝, boundingRectWidth, boundingRectHeight)`를 호출하고 시작점을 지운다. 시작점이 없으면 무시한다.
+      - 그 밖의 `type`은 무시한다.
+    - `show() -> None`: `ipywidgets`로 `Image`(화면 폭은 `display_width`, 기본 360px, 높이는 `round(display_width * 높이 / 폭)`), 프레임 슬라이더, 앞뒤 버튼, 좌상단·우하단 슬라이더 4개(정규화 0~1), `save box`와 `save empty` 버튼, `pointer_text`를 보여 줄 `HTML` 한 줄을 만든다. `ipyevents.Event`는 아래 구성으로 `Image`에 붙이고 `on_dom_event`에 `handle_pointer_event`를 연결한다: `watched_events=["mousedown", "mouseup", "mousemove"]`, `prevent_default_action=True`, `throttle_or_debounce="throttle"`, `wait=50`. 슬라이더와 드래그는 같은 `draft`를 갱신한다. `ipywidgets`와 `ipyevents`는 `show()` 안에서 가져온다. 이미지는 `cv2.imencode`로 메모리에서만 인코딩한다.
+      - 이 구성은 합성 이미지 시험 노트북으로 실제 Chrome(헤드리스, 화면 배율 1배와 2배)에서 검증했다: 호버, 모서리 클릭, 기준 사각형 드래그, 스크롤한 상태의 드래그가 3개 해상도(720×1280, 1080×1920, 404×720)에서 모두 맞았고 드래그 중 이미지 끌기와 텍스트 선택은 발생하지 않았다. 다른 브라우저는 시험하지 않았고 도메인 담당이 필요 없다고 했다(2026-11-17).
+
+- [ ] **Step 1: 실패하는 테스트 작성** (합성 영상과 합성 숫자만. 위젯과 브라우저가 아니라 메서드를 검증한다. 실제 사람이 나온 영상은 쓰지 않는다).
+  - `test_corners_to_norm_box_matches_hand_computed_values` / `test_corner_order_does_not_matter`
+  - `test_corners_to_norm_box_same_for_proportional_display_and_original_size` (360x640 화면과 1080x1920 원본)
+  - `test_corners_are_clipped_to_frame_and_box_never_leaves_zero_to_one`
+  - `test_box_with_no_area_after_clipping_raises_value_error` (완전히 화면 밖, 너비 0)
+  - `test_format_yolo_line_has_class_zero_and_six_decimals` / `test_parse_yolo_line_round_trips_and_rejects_bad_lines`
+  - `test_saved_box_is_read_back_equal_within_six_decimals`
+  - `test_status_unlabeled_empty_and_box`
+  - `test_empty_file_and_missing_file_are_different_states`
+  - `test_saving_again_replaces_box_with_empty_and_empty_with_box`
+  - `test_frame_outside_video_raises_value_error`, `test_bool_or_float_frame_raises_value_error`, `test_blank_video_id_raises_value_error`
+  - `test_failed_save_leaves_existing_file_unchanged`
+  - `test_frame_outside_range_exception_is_rejected_for_box_and_empty` / `test_frame_at_range_edges_is_accepted` (`end_frame` 포함)
+  - `test_video_without_range_exception_accepts_any_frame_in_video`
+  - `test_read_frame_ranges_valid_and_missing_file`, `test_read_frame_ranges_rejects_bad_rows_with_line_number` (비정수, start>end, 중복, 빈 id)
+  - `test_session_step_clamps_and_goto_out_of_range_raises`
+  - `test_session_move_clears_draft`
+  - `test_session_save_without_draft_raises`
+  - `test_pointer_drag_events_set_draft_equal_to_corner_computation` (mousedown, mousemove, mouseup 순서의 모의 이벤트. 화면 360×640과 원본 비례 크기에서 같은 `draft`)
+  - `test_pointer_mouseup_without_mousedown_is_ignored`
+  - `test_pointer_mousemove_updates_text_but_not_draft`
+  - `test_pointer_event_with_zero_bounding_rect_is_ignored`
+  - `test_pointer_unknown_event_type_is_ignored`
+  - `test_pointer_text_shows_fractions_and_original_pixels` (원본 크기 기준 픽셀)
+  - `test_session_view_draws_saved_box_green_and_draft_yellow` (픽셀 값으로 확인)
+  - `test_session_view_text_reports_status_and_range_exception`
+  - `test_session_and_store_write_no_image_file` (`.txt` 외 새 파일 없음)
+  - `test_draw_overlay_default_color_unchanged` (`test_label_viewer.py`), `test_plate_box_txt_is_tracked_by_gitignore_rules` (`test_scaffold.py`)
+  - 노트북 위생 테스트가 새 노트북에도 통과하는지(기존 5개 테스트가 `tutorials/`의 모든 노트북을 본다. 보지 않으면 확장).
+- [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_plate_boxes.py -v` → FAIL.
+- [ ] **Step 3: 구현.** `ipyevents`는 `uv add ipyevents`로 추가한다(`pyproject.toml`과 `uv.lock`이 바뀐다). 의존성 추가 전에 설치된 `ipywidgets` 8.1.9와 충돌하지 않는지 `uv lock`이 통과하는지로 확인한다.
+- [ ] **Step 4: 통과 확인.** `uv run pytest -q` 전체 통과, `uv run ruff check`.
+- [ ] **Step 5: 노트북 작성.** `tutorials/label_plates.ipynb`는 마크다운 안내 셀과, 영상 id·경로를 넣고 `BoxLabelingSession(...).show()`를 호출하는 셀만 갖는다. 저장된 출력이 없다. 실행하지 않는다.
+- [ ] **Step 6: `data/annotations/plate_frame_ranges.csv` 생성**(`b02_sn_h_02,0,53,plate_leaves_frame` 한 줄과 헤더). `data/README.md`에 한 단락 추가(저장 위치, 한 줄 형식, 빈 파일과 파일 없음, 범위 예외).
+- [ ] **Step 7: 커밋.**
+
+**검증되지 않는 부분 (보고서에 명시):** 실제 JupyterLab에서 마우스 이벤트가 서버까지 전달되는지, 화면 좌표가 원본 좌표와 맞는지는 이 환경에서 시험할 수 없다. 서버 쪽 변환(`corners_to_norm_box`)과 저장은 합성 숫자로 검증하고, 브라우저 동작은 도메인 담당이 `a01_sn_f_01`의 3번 프레임에 박스를 그려 저장한 뒤 다시 열어 원판 외곽과 맞는지로 확인한다(#2, 2026-11-13).
+
+**이 Task에서 제외:** 박스로부터 학습 데이터셋을 만드는 일(Task 6b가 이 형식을 읽도록 바꾼다), 음성 샘플(`b05_sn_f_01`, `b06_sn_f_01`)의 프레임 선정 규칙, 첫 라벨링의 인원·영상 수 결정, 노트북 자동 실행.
+
 ### Task 6: 탐지 평가기
 
 **Files:**
