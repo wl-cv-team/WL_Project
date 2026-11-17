@@ -49,6 +49,8 @@ c02_sn_f_01,transition,25,2
 c02_sn_f_01,drive,34,2
 c02_sn_f_01,catch,69,2
 c02_sn_f_01,finish,103,2
+c05_sn_f_01,finish,102,1
+c05_sn_f_01,finish,101,2
 c08_sn_f_01,ready,10,1
 c08_sn_f_01,transition,24,1
 c08_sn_f_01,drive,33,1
@@ -59,7 +61,5 @@ c08_sn_f_01,transition,23,2
 c08_sn_f_01,drive,32,2
 c08_sn_f_01,catch,59,2
 c08_sn_f_01,finish,94,2
-c05_sn_f_01,finish,102,1
-c05_sn_f_01,finish,101,2
 c09_sn_f_03,finish,78,1
 c09_sn_f_03,finish,79,2
