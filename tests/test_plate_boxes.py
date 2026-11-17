@@ -377,7 +377,7 @@ def test_pointer_mousemove_updates_text_but_not_draft(make_video, tmp_path):
     session.handle_pointer_event({"type": "mousemove", "relativeX": 200, "relativeY": 300, **base})
     assert session.draft is None
     session.handle_pointer_event({"type": "mouseup", "relativeX": 270, "relativeY": 480, **base})
-    assert session.draft is not None  # the start point survived the mousemove
+    assert session.draft is not None  # the start point is still set after the mousemove
 
 
 def test_pointer_event_with_zero_bounding_rect_is_ignored(make_video, tmp_path):
@@ -414,7 +414,7 @@ def test_pointer_click_without_drag_raises_and_leaves_no_start_point(make_video,
     with pytest.raises(ValueError):
         session.handle_pointer_event({"type": "mouseup", **base})
     assert session.draft is None
-    session.handle_pointer_event({"type": "mouseup", **base})  # start point is gone
+    session.handle_pointer_event({"type": "mouseup", **base})  # the start point is cleared
     assert session.draft is None
 
 
@@ -459,7 +459,7 @@ def test_session_view_text_reports_status_and_range_exception(make_video, tmp_pa
     text = "\n".join(lines)
     assert "frame 1 / 5" in text
     assert "unlabeled" in text
-    assert "1" in text and "3" in text and "plate_leaves_frame" in text
+    assert "allowed frames 1..3: plate_leaves_frame" in lines
     session.save_empty()
     _, lines = session.view()
     assert any("empty" in line for line in lines)
@@ -491,3 +491,44 @@ def test_session_and_store_write_no_image_file(make_video, tmp_path):
     everything = sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file())
     assert everything == ["plate_boxes/v01_f0.txt", "plate_boxes/v01_f1.txt", "v.mp4"]
     assert not any(name.startswith(".") for name in os.listdir(store.boxes_dir))
+
+
+def test_pointer_drag_start_is_cleared_by_frame_change(make_video, tmp_path):
+    base = {"boundingRectWidth": 360, "boundingRectHeight": 640}
+    for change in (lambda s: s.goto(1), lambda s: s.step(1), lambda s: s.clear_draft()):
+        session = portrait_session(make_video, tmp_path, frames=3)
+        session.handle_pointer_event({"type": "mousedown", "relativeX": 90, "relativeY": 160, **base})
+        change(session)
+        session.handle_pointer_event({"type": "mouseup", "relativeX": 270, "relativeY": 480, **base})
+        assert session.draft is None
+
+
+def test_corners_to_norm_box_rejects_non_finite_values():
+    nan, inf = float("nan"), float("inf")
+    for args in (
+        (nan, 0, 10, 10, 20, 20),
+        (0, inf, 10, 10, 20, 20),
+        (0, 0, 10, -inf, 20, 20),
+        (0, 0, 10, 10, nan, 20),
+        (0, 0, 10, 10, 20, inf),
+    ):
+        with pytest.raises(ValueError, match="not finite"):
+            corners_to_norm_box(*args)
+
+
+def test_pointer_event_with_nan_coordinate_is_ignored(make_video, tmp_path):
+    session = portrait_session(make_video, tmp_path)
+    base = {"boundingRectWidth": 360, "boundingRectHeight": 640}
+    session.handle_pointer_event({"type": "mousemove", "relativeX": float("nan"), "relativeY": 5, **base})
+    assert session.pointer_text == ""
+    session.handle_pointer_event({"type": "mousedown", "relativeX": float("nan"), "relativeY": 5, **base})
+    session.handle_pointer_event({"type": "mouseup", "relativeX": 100, "relativeY": 100, **base})
+    assert session.draft is None
+
+
+def test_goto_rejects_non_int_frames(make_video, tmp_path):
+    session = portrait_session(make_video, tmp_path, frames=3)
+    for frame in (True, False, 1.0, 1.5, "1", None):
+        with pytest.raises(ValueError):
+            session.goto(frame)
+    assert session.frame == 0

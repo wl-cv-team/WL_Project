@@ -17,6 +17,7 @@ in memory only.
 from __future__ import annotations
 
 import csv
+import math
 import os
 import tempfile
 from collections.abc import Mapping
@@ -46,6 +47,10 @@ def corners_to_norm_box(
     pixel coordinates (original size). Raises ValueError when the clipped
     rectangle has no width or no height.
     """
+    inputs = {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "width": width, "height": height}
+    non_finite = [name for name, value in inputs.items() if not math.isfinite(value)]
+    if non_finite:
+        raise ValueError(f"box input {', '.join(non_finite)} is not finite: {inputs}")
     left = min(max(min(x1, x2), 0.0), width)
     right = min(max(max(x1, x2), 0.0), width)
     top = min(max(min(y1, y2), 0.0), height)
@@ -238,18 +243,19 @@ class BoxLabelingSession:
         self._drag_start: tuple[float, float] | None = None
 
     def goto(self, frame: int) -> None:
-        """Move to a frame and clear the draft."""
-        if not 0 <= frame < self.frame_count:
+        """Move to a frame and clear the draft and any drag start."""
+        if type(frame) is not int or not 0 <= frame < self.frame_count:
             raise ValueError(
-                f"{self.video_id}: frame {frame} is outside 0..{self.frame_count - 1}"
+                f"{self.video_id}: frame {frame!r} is not an integer within "
+                f"0..{self.frame_count - 1}"
             )
         self.frame = frame
-        self.draft = None
+        self.clear_draft()
 
     def step(self, delta: int) -> None:
         """Move by `delta` frames, stopping at the first and last frame. Clears the draft."""
         self.frame = min(max(self.frame + delta, 0), self.frame_count - 1)
-        self.draft = None
+        self.clear_draft()
 
     def set_draft_from_corners(
         self, x1: float, y1: float, x2: float, y2: float, width: float, height: float
@@ -257,7 +263,9 @@ class BoxLabelingSession:
         self.draft = corners_to_norm_box(x1, y1, x2, y2, width, height)
 
     def clear_draft(self) -> None:
+        """Clear the draft and the drag start."""
         self.draft = None
+        self._drag_start = None
 
     def save_box(self) -> None:
         if self.draft is None:
@@ -307,6 +315,8 @@ class BoxLabelingSession:
             width = float(event["boundingRectWidth"])
             height = float(event["boundingRectHeight"])
         except (KeyError, TypeError, ValueError):
+            return
+        if not all(math.isfinite(value) for value in (x, y, width, height)):
             return
         if not width > 0 or not height > 0:
             return
