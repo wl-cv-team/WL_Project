@@ -82,3 +82,9 @@ def test_metadata_annotations_and_splits_are_tracked(path: str):
 )
 def test_other_image_formats_and_upper_case_extensions_are_ignored(path: str):
     assert _check_ignore(path) == 0
+
+
+def test_plate_box_txt_is_tracked_by_gitignore_rules():
+    # 원판 박스 라벨(한 줄 텍스트)과 범위 예외 표는 팀이 같은 값을 쓰도록 추적한다.
+    assert _check_ignore("data/annotations/plate_boxes/a01_sn_f_01_f3.txt") == 1
+    assert _check_ignore("data/annotations/plate_frame_ranges.csv") == 1

@@ -9,6 +9,7 @@ description = "인상(snatch) 영상 측정 연구 기반"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "ipyevents>=2.0.4",
     "ipywidgets>=8.1.9",
     "matplotlib",
     "numpy",
