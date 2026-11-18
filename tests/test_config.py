@@ -54,3 +54,35 @@ def test_auto_prefers_mps_then_cuda_then_cpu():
     assert resolve_device("auto", True, True) == ("mps", None)
     assert resolve_device("auto", False, True) == ("cuda", None)
     assert resolve_device("auto", False, False) == ("cpu", None)
+
+
+@pytest.mark.parametrize("name", ["", None, 26])
+def test_config_rejects_empty_or_non_string_model_name(name):
+    with pytest.raises(ValueError, match="model_name"):
+        DetectorConfig(model_name=name)
+
+
+@pytest.mark.parametrize("field", ["imgsz", "epochs"])
+@pytest.mark.parametrize("value", [True, 640.0, "640"])
+def test_config_rejects_non_int_imgsz_and_epochs(field, value):
+    with pytest.raises(ValueError, match=field):
+        DetectorConfig(model_name="yolo26", **{field: value})
+
+
+@pytest.mark.parametrize("value", [True, "0.5", None])
+def test_config_rejects_non_real_conf(value):
+    with pytest.raises(ValueError, match="conf"):
+        DetectorConfig(model_name="yolo26", conf=value)
+
+
+def test_config_accepts_int_conf_in_bounds():
+    assert DetectorConfig(model_name="yolo26", conf=1).conf == 1
+
+
+def test_resolve_device_accepts_indexed_cuda():
+    assert resolve_device("cuda:0", False, True) == ("cuda:0", None)
+    device, reason = resolve_device("cuda:1", True, False)
+    assert device == "cpu"
+    assert reason and "cuda:1" in reason
+    with pytest.raises(ValueError, match="cuda:x"):
+        resolve_device("cuda:x", True, True)

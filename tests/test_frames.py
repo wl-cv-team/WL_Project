@@ -11,6 +11,8 @@ from wl_snatch.frames import (
     raw_frame_times_ms,
     read_frame,
     read_frames,
+    VideoUnreadableError,
+    check_readable,
 )
 
 @pytest.fixture
@@ -146,3 +148,22 @@ def test_read_frames_empty_request_yields_nothing(video: Path):
 def test_read_frames_missing_video_raises_value_error(tmp_path: Path):
     with pytest.raises(ValueError, match="absent.mp4"):
         list(read_frames(tmp_path / "absent.mp4", [0]))
+
+
+def test_check_readable_accepts_readable_video_without_decoding(
+    video: Path, monkeypatch: pytest.MonkeyPatch
+):
+    def fail(self):
+        raise AssertionError("must not decode")
+
+    monkeypatch.setattr(cv2.VideoCapture, "read", fail)
+    assert check_readable(video) is None
+
+
+def test_check_readable_raises_unreadable_error_for_missing_and_corrupt(tmp_path: Path):
+    with pytest.raises(VideoUnreadableError, match="absent.mp4"):
+        check_readable(tmp_path / "absent.mp4")
+    broken = tmp_path / "broken.mp4"
+    broken.write_bytes(b"not a video")
+    with pytest.raises(VideoUnreadableError, match="broken.mp4"):
+        check_readable(broken)

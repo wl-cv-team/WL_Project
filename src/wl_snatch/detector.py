@@ -20,7 +20,7 @@ import numpy as np
 
 from wl_snatch.config import DetectorConfig, resolve_device, weight_name
 from wl_snatch.contracts import BoxDetection, FrameDetections
-from wl_snatch.frames import VideoUnreadableError, count_frames, read_frames
+from wl_snatch.frames import VideoUnreadableError, check_readable, count_frames, read_frames
 
 LABEL = "plate"
 VIDEO_UNREADABLE = "video_unreadable"
@@ -50,30 +50,46 @@ def detect_frames(
     """
     wanted = sorted(set(frame_indices))
     results: dict[int, FrameDetections] = {}
+    if not wanted:
+        return []
+    # Checked first so an unopenable video is unreadable for every index,
+    # negative ones included (read_frames is not called when none is >= 0).
+    try:
+        check_readable(video_path)
+    except VideoUnreadableError:
+        return [_na(video_id, i, VIDEO_UNREADABLE) for i in wanted]
     frames = read_frames(video_path, [i for i in wanted if i >= 0])
-    while True:
-        try:
-            index, frame = next(frames)
-        except StopIteration:
-            break
-        except VideoUnreadableError:
-            return [_na(video_id, i, VIDEO_UNREADABLE) for i in wanted]
-        except ValueError:
-            # read_frames raises this only after yielding every reachable frame.
-            break
-        boxes = tuple(
-            BoxDetection(index, x1, y1, x2, y2, score, LABEL)
-            for x1, y1, x2, y2, score in model(frame)
-            if score >= config.conf
-        )
-        results[index] = FrameDetections(video_id, index, boxes, None)
+    try:
+        while True:
+            try:
+                index, frame = next(frames)
+            except StopIteration:
+                break
+            except VideoUnreadableError:
+                return [_na(video_id, i, VIDEO_UNREADABLE) for i in wanted]
+            except ValueError:
+                # read_frames raises this only after yielding every reachable frame.
+                break
+            boxes = tuple(
+                BoxDetection(index, x1, y1, x2, y2, score, LABEL)
+                for x1, y1, x2, y2, score in model(frame)
+                if score >= config.conf
+            )
+            results[index] = FrameDetections(video_id, index, boxes, None)
+    finally:
+        frames.close()
     return [results.get(i) or _na(video_id, i, FRAME_OUT_OF_RANGE) for i in wanted]
 
 
 def detect_video(
     video_path: Path, video_id: str, model: ModelFn, config: DetectorConfig
 ) -> list[FrameDetections]:
-    """`detect_frames` over every decoded frame; an unreadable video gives an empty list."""
+    """`detect_frames` over every decoded frame.
+
+    The number of frames is found by decoding once (`count_frames`). When that
+    fails (unreadable video) the number of frames is unknown, so there is no
+    frame number to mark N/A and the result is an empty list.
+    """
     try:
         total = count_frames(video_path)
     except ValueError:

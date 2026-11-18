@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 # yolo26n.pt is listed in the Ultralytics YOLO26 docs. The other two are the
@@ -21,10 +22,16 @@ class DetectorConfig:
     epochs: int = 50
 
     def __post_init__(self) -> None:
-        if self.imgsz <= 0:
-            raise ValueError(f"imgsz must be positive, got {self.imgsz}")
-        if self.epochs <= 0:
-            raise ValueError(f"epochs must be positive, got {self.epochs}")
+        if not isinstance(self.model_name, str) or not self.model_name:
+            raise ValueError(f"model_name must be a non-empty string, got {self.model_name!r}")
+        for field in ("imgsz", "epochs"):
+            value = getattr(self, field)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"{field} must be an int, got {value!r}")
+            if value <= 0:
+                raise ValueError(f"{field} must be positive, got {value}")
+        if isinstance(self.conf, bool) or not isinstance(self.conf, (int, float)):
+            raise ValueError(f"conf must be a number, got {self.conf!r}")
         if not 0.0 <= self.conf <= 1.0:
             raise ValueError(f"conf must be between 0 and 1, got {self.conf}")
 
@@ -52,11 +59,13 @@ def resolve_device(
         if cuda_available:
             return "cuda", None
         return "cpu", None
-    if requested not in _DEVICES:
+    kind = "cuda" if re.fullmatch(r"cuda:\d+", requested) else requested
+    if kind not in _DEVICES:
         raise ValueError(
-            f"unknown device {requested!r}; use auto or one of {', '.join(_DEVICES)}"
+            f"unknown device {requested!r}; use auto, cuda:<index> or one of "
+            f"{', '.join(_DEVICES)}"
         )
     available = {"cpu": True, "mps": mps_available, "cuda": cuda_available}
-    if available[requested]:
+    if available[kind]:
         return requested, None
     return "cpu", f"{requested} requested but not available; using cpu"

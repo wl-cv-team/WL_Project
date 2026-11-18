@@ -133,3 +133,51 @@ def test_detector_writes_no_image_file(video: Path, tmp_path: Path):
     assert after == before
     images = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
     assert not [p for p in after if p.suffix.lower() in images]
+
+
+@pytest.mark.parametrize("request_", [[-1], [-1, -2], [-1, 3], [3]])
+def test_unreadable_video_is_unreadable_for_every_index_including_negative(
+    tmp_path: Path, request_: list[int]
+):
+    model = FakeModel()
+    result = detect_frames(tmp_path / "absent.mp4", "v1", request_, model, CONFIG)
+    assert [f.frame_index for f in result] == sorted(request_)
+    assert all(f.na_reason == "video_unreadable" for f in result)
+    assert model.calls == []
+
+
+def test_readable_video_with_only_negative_indices_is_out_of_range_without_model_call(
+    video: Path,
+):
+    model = FakeModel()
+    result = detect_frames(video, "v1", [-1, -3], model, CONFIG)
+    assert [(f.frame_index, f.na_reason) for f in result] == [
+        (-3, "frame_out_of_range"),
+        (-1, "frame_out_of_range"),
+    ]
+    assert model.calls == []
+
+
+def test_frame_generator_is_closed_when_model_raises(
+    video: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import wl_snatch.detector as detector
+
+    closed = []
+    original = detector.read_frames
+
+    def tracking(path, indices):
+        try:
+            yield from original(path, indices)
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(detector, "read_frames", tracking)
+
+    def boom(frame):
+        raise RuntimeError("model failed")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        detect_frames(video, "v1", [0, 1], boom, CONFIG)
+    assert closed == [True]  # closed while the exception is still held
+    assert excinfo.value is not None

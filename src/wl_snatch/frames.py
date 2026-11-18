@@ -30,6 +30,14 @@ def _open(video_path: Path) -> cv2.VideoCapture:
     return capture
 
 
+def check_readable(video_path: Path) -> None:
+    """Open the video and release it; no frame is decoded.
+
+    Raises VideoUnreadableError when the file is missing or cannot be opened.
+    """
+    _open(video_path).release()
+
+
 def _decode(capture: cv2.VideoCapture) -> Iterator[tuple[np.ndarray, float]]:
     """Yield (frame, timestamp in ms as reported by the decoder) in decode order."""
     while True:
