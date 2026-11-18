@@ -318,3 +318,18 @@ def test_unreadable_frame_with_boxes_says_it_could_not_be_read(video: Path):
     assert px(image, 20, 12) == class_color("person")  # boxes still drawn on the placeholder
     readable = DetectionViewSession(video, "v1", frames_of((2, [box(2, 5, 5, 20, 20)])))
     assert not any("읽지 못함" in line for line in readable.view()[1])
+
+
+def test_negative_na_frame_does_not_hide_valid_frames(video):
+    detections = [
+        FrameDetections("v1", -1, (), "frame_out_of_range"),
+        FrameDetections("v1", 0, (), None),
+    ]
+    session = DetectionViewSession(video, "v1", detections)
+    assert session.frame_indices == [-1, 0]
+    _, info = session.view()
+    assert any("N/A: frame_out_of_range" in line for line in info)
+    session.goto(1)
+    image, info = session.view()
+    np.testing.assert_array_equal(image, read_frame(video, 0))
+    assert not any("프레임을 읽지 못함" in line for line in info)

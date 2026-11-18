@@ -130,7 +130,9 @@ class DetectionViewSession:
     def _read(self, video_path: Path) -> dict[int, np.ndarray]:
         frames: dict[int, np.ndarray] = {}
         try:
-            for index, frame in read_frames(video_path, self.frame_indices):
+            for index, frame in read_frames(
+                video_path, [index for index in self.frame_indices if index >= 0]
+            ):
                 frames[index] = frame
         except ValueError:
             pass  # unreadable video or frames beyond its end: those frames show a placeholder
