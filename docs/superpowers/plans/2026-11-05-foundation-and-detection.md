@@ -431,11 +431,13 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 **Interfaces:**
 - Consumes: `FrameDetections`, `BoxDetection` (Task 2).
 - Produces:
-  - `GroundTruthFrame(video_id: str, frame_index: int, boxes: tuple[tuple[float, float, float, float], ...])` frozen dataclass. `boxes`의 각 항목은 `(x1, y1, x2, y2)` 픽셀 좌표이고, `boxes`가 비어 있으면 원판이 없는 프레임이다(예측은 모두 오탐).
-  - `DetectionMetrics(precision: float | None, recall: float | None, false_positives_per_frame: float | None, frames_evaluated: int, frames_na: int, na_reasons: dict[str, int])`
+  - `GroundTruthFrame(video_id: str, frame_index: int, boxes: tuple[tuple[float, float, float, float], ...])` frozen dataclass. 정의는 `contracts.py`에 있고(A단계 최종 리뷰에서 평가기에서 옮김) `eval_detection`에서도 가져올 수 있다. `boxes`의 각 항목은 `(x1, y1, x2, y2)` 픽셀 좌표이고, `boxes`가 비어 있으면 원판이 없는 프레임이다(예측은 모두 오탐).
+  - `DetectionMetrics(precision: float | None, recall: float | None, false_positives_per_frame: float | None, frames_evaluated: int, frames_na: int, na_reasons: dict[str, int], true_positives: int = 0, false_positives: int = 0, false_negatives: int = 0)`. 세 개수는 표본 크기(N)를 보고하기 위한 것이다.
   - `evaluate_detections(predictions: list[FrameDetections], truths: list[GroundTruthFrame], iou_threshold: float) -> DetectionMetrics`
 
 **동작:** 오탐은 정답과 IoU가 임계값 미만이거나 이미 매칭된 정답에 또 매칭된 예측이다. 정답 박스가 없는 프레임(원판 없음)의 예측은 모두 오탐이다. `N/A` 프레임은 평균에서 빼고 사유별로 센다. 분모가 0이면 해당 지표는 `None`이다.
+
+**구현에서 정한 규칙 (컨트롤러 판단):** `truths`에 없는 프레임의 예측은 무시한다(평가는 라벨된 프레임에서만 한다). 정답 프레임에 예측 항목이 없으면 `N/A`(사유 `prediction_missing`)이다. `(video_id, frame_index)`가 `predictions`나 `truths`에서 중복되면 `ValueError`, `iou_threshold`는 `0 < x <= 1`(불리언 제외). 같은 신뢰도의 예측은 입력 순서로 매칭한다. 예측이 `N/A`인 프레임의 정답 박스는 미검출로 세지 않는다.
 
 - [ ] **Step 1: 실패하는 테스트 작성.**
   - `test_perfect_prediction_gives_precision_and_recall_one`
@@ -447,7 +449,7 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
   - `test_no_predictions_gives_precision_none`
 - [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_eval_detection.py -v` → FAIL.
 - [ ] **Step 3: 구현.** 확신도가 높은 예측부터 탐욕적으로 매칭한다.
-- [ ] **Step 4: 통과 확인.** → 7 passed.
+- [ ] **Step 4: 통과 확인.** → 계획한 7개와 위 규칙을 확인하는 테스트가 모두 통과한다(예: 신뢰도 내림차순 매칭을 고정하는 `test_matching_order_follows_descending_confidence`).
 - [ ] **Step 5: 커밋.**
 
 ### Task 6a: 정답 만들기 — 영상 + 원판 박스 라벨 + 분할 (A단계)
@@ -469,7 +471,9 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
     - 폴더의 `.txt` 파일마다 영상 id와 프레임을 읽는다. 숨김 파일(`.`으로 시작)은 건너뛴다. 영상이 `split`에 없으면 건너뛰고 `skipped_not_in_split`로 센다. 영상이 `split`에는 있는데 `videos`에 없으면 영상 id가 담긴 `ValueError`. 프레임이 `[0, frame_count)` 밖이면 영상 id와 프레임이 담긴 `ValueError`.
     - 그 영상의 `role`이 요청한 `role`일 때만 포함한다. 박스 파일이면 정규화 좌표를 `videos`의 `width`, `height`로 곱해 `(x1, y1, x2, y2)` 픽셀 좌표 한 개를 `boxes`에 담는다. 빈 파일이면 `boxes=()`(원판 없음 프레임, 평가에서 예측은 모두 오탐).
     - 결과는 `(video_id, frame_index)` 순(프레임은 숫자 순).
-- 사람 단위 분할은 `split`의 `role`을 그대로 따른다. 같은 영상이 두 역할에 나오지 않는다.
+- 사람 단위 분할은 `split`의 `role`을 그대로 따른다. 같은 영상이 두 역할에 나오지 않는다. `person_id`로 사람 누수를 검사하는 것은 이 함수가 아니라 `split.assert_no_person_leak`이다.
+- 구현에서 정한 규칙(컨트롤러 판단, 최종 리뷰 반영): 라벨 파일 이름의 프레임은 ASCII 숫자이고 앞에 0이 없어야 한다(`a_f03.txt`는 `PlateBoxStore`가 여는 `a_f3.txt`와 달라 박스가 조용히 빈 프레임이 되므로 `ValueError`). `.TXT`처럼 대소문자가 다른 확장자는 `ValueError`, 다른 확장자와 숨김 파일과 파일이 아닌 항목은 건너뛴다. `frame_count`, `width`, `height`는 정수여야 하며 아니면 영상 id와 열 이름이 담긴 `ValueError`다. `split`이나 `videos`에 필요한 열이 없으면 열 이름이 담긴 `ValueError`, 같은 `video_id`가 두 번 나와도 `ValueError`다. `ranges_path`가 있으면 범위 예외 검사는 역할 필터보다 먼저 모든 라벨 파일에 적용된다.
+- `videos.csv`의 `width`, `height`, `frame_count`는 디코딩한 값과 같아야 한다(`video_timing.csv`와 54편 모두 일치함을 확인했다). 이 코드는 값을 다시 검사하지 않는다.
 
 - [ ] **Step 1: 실패하는 테스트 작성** (합성 표와 임시 폴더에 쓴 합성 라벨 파일만 사용. 영상과 이미지는 쓰지 않는다).
   - `test_parse_label_name_reads_video_id_containing_f_and_frame_number`
@@ -492,6 +496,8 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 
 **이 Task에서 제외:** 이미지 파일 생성(Task 6b), 모델 호출, 평가.
 
+**후속(Task 5f 머지 뒤):** Task 5f(`plate_boxes.compare_passes`)도 라벨 파일 이름을 해석하는데 규칙이 다르다(앞의 0, 유니코드 숫자, `.DS_Store` 같은 숨김 파일 처리). 엄격한 `parse_label_name`과 파일 순회를 `plate_boxes.py` 한 곳에 두고 `ground_truth`, `compare_passes`, 첫 번째 라벨 잠금이 함께 쓰게 통합한다. 어느 pass를 정답으로 쓸지도 그때 팀이 정한다.
+
 ### Task 6b: 학습용 데이터셋 내보내기 (B단계 — 이슈 #2의 이미지 정책 결정 뒤에 실행)
 
 **상태:** 이슈 #2(2026-11-18)에서 "학습용 이미지 파일을 로컬 git 제외 폴더에 만들어도 되는가"를 동료에게 물었다. 답이 (a) 로컬 허용이면 아래대로 구현하고, (b) 메모리 처리면 이 Task를 다시 쓴다. 정해지기 전에는 구현하지 않는다.
@@ -508,6 +514,8 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
   - `assert_ignored_output(out_dir: Path, repo_root: Path) -> None`: `out_dir`이 저장소 안이고 `git check-ignore`로 제외되지 않으면 `ValueError`(저장소 밖 경로는 허용).
   - `export_yolo_dataset(frames_by_role: Mapping[str, Sequence[GroundTruthFrame]], videos: pd.DataFrame, videos_root: Path, out_dir: Path, repo_root: Path) -> Path`: `out_dir`이 비어 있지 않으면 `ValueError`. 역할별로 `images/<role>/<video_id>_f<프레임>.jpg`와 `labels/<role>/<video_id>_f<프레임>.txt`(정규화 `0 cx cy w h`, 박스 없으면 빈 파일)를 쓰고, 상대경로 `dataset.yaml`(`path`, `train`, `val`, `names: {0: plate}`)을 쓴 뒤 그 경로를 돌려준다. 같은 `(video_id, frame)`이 두 역할에 있으면 `ValueError`.
 - 이 모듈 밖에서는 학습용 이미지 파일을 만들지 않는다.
+- `validation` 역할은 `dataset.yaml`의 `val` 키로 쓰고 폴더 이름은 `validation`으로 둔다(역할에서 폴더와 키로의 대응을 코드에 명시한다).
+- 이 Task에서 `data/README.md`의 "이미지를 파일로 만드는 코드는 두지 않고" 문장을, 로컬 git 제외 폴더에만 만드는 학습용 이미지에 맞게 고친다(정책이 (a)로 정해진 경우).
 
 - [ ] **Step 1: 실패하는 테스트 작성** (합성 영상과 합성 `GroundTruthFrame`).
   - `test_export_places_frames_by_role_and_writes_yaml`
@@ -542,6 +550,13 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
   - `load_ultralytics_model(config: DetectorConfig) -> ModelFn`: Ultralytics를 **함수 안에서** 가져와(`import ultralytics`는 모듈 맨 위에 두지 않는다) 가중치를 불러오고, 프레임을 `ModelFn` 형식으로 바꿔 준다. `resolve_device` 결과와 사유를 기록한다. 가중치 파일(`*.pt`)은 git 제외다.
 - `pyproject.toml`의 의존성은 이 Task에서 바꾸지 않는다(`torch`, `torchvision`, `ultralytics`는 이미 기본 의존성). 선택 그룹으로 옮기는 일은 팀 합의 뒤 별도 변경으로 한다.
 
+**구현에서 정한 규칙 (컨트롤러 판단, 리뷰 반영):**
+- `frames.check_readable(video_path)`는 디코딩 없이 영상을 열 수 있는지만 확인하고 열 수 없으면 `VideoUnreadableError`(`ValueError`의 하위 클래스)를 낸다. `detect_frames`는 요청이 비어 있지 않으면 이것을 먼저 호출해, 열 수 없는 영상은 음수 번호를 포함한 모든 요청 프레임이 `video_unreadable`이 된다(빈 요청은 영상을 열지 않고 빈 목록).
+- `frames.read_frames`는 도달할 수 있는 프레임을 모두 돌려준 뒤에야 범위 밖 번호에 대해 `ValueError`를 낸다. 음수 번호는 디코딩 전에 `ValueError`다. 제너레이터는 `try/finally`로 닫는다.
+- `detect_video`는 영상을 열 수 없으면 `video_unreadable`인 프레임 0 하나를 돌려준다(프레임 수를 알 수 없기 때문).
+- `DetectorConfig`는 빈 `model_name`, 불리언·소수·문자열 `imgsz`와 `epochs`, 불리언이나 숫자가 아닌 `conf`를 거부하고, `weights_path: Path | None = None`을 가진다. `resolve_device`는 `cuda:<숫자>`를 CUDA 요청으로 받는다.
+- **사전학습 가중치로 `plate`를 쓰지 않는다 (최종 리뷰 B2):** `WEIGHT_NAMES`의 가중치는 COCO 사전학습이라 원판 탐지기가 아니다. `load_ultralytics_model`은 `weights_path`가 없으면 Ultralytics를 가져오기 전에 `ValueError`를 내고, 불러온 모델의 `names`가 `{0: "plate"}`가 아니면 `check_plate_names`가 `ValueError`를 낸다. `weight_name()`은 학습의 시작점(Task 8)에만 쓴다. `scripts/run_detector.py`는 `--weights PATH`가 필요하다.
+
 - [ ] **Step 1: 실패하는 테스트 작성** (합성 영상과 가짜 `ModelFn`만 사용. 가중치를 받거나 Ultralytics를 호출하지 않는다).
   - `test_read_frames_returns_requested_frames_in_ascending_order_once_each` (`tests/test_frames.py`)
   - `test_read_frames_out_of_range_raises_value_error_with_name_and_index` (`tests/test_frames.py`)
@@ -565,28 +580,50 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 
 **이 Task에서 제외:** 학습(Task 8), 가중치 내려받기와 실제 모델 실행, 이미지 파일 생성, 의존성 변경.
 
+### Task 7b: 층 사이 통합 테스트 (A단계)
+
+**배경:** 층마다 따로 시험하면 층 사이의 약속(좌표 규칙, `N/A`, 프레임 번호)이 어긋나도 알 수 없다. 합성 영상, 합성 라벨, 가짜 모델로 정답 만들기 → 탐지 → 평가를 끝에서 끝까지 확인한다.
+
+**Files:** Create `tests/test_pipeline.py`.
+
+- 가짜 모델의 박스는 정답 만들기의 출력이 아니라 **손으로 계산한 픽셀 상수**로 정한다. 정답 코드의 출력을 그대로 돌려주면 변환 오류가 상쇄되어 테스트가 틀린 구현도 통과시킨다(컨트롤러가 정답 만들기에서 너비와 높이를 바꿔 이를 확인했다).
+- 상수는 좁고 한쪽으로 치우친 박스여야 너비·높이 혼동이 IoU를 바꾼다.
+- 검증 방법: 변형 두 가지를 임시로 적용해 테스트가 실패하는지 본다. 정답 만들기가 너비 자리에 높이를 읽는 변형(통합 테스트 9개 중 7개 실패), 탐지기의 신뢰도 필터를 뒤집은 변형(9개 중 6개 실패). 확인한 뒤 되돌린다.
+- 테스트: `test_perfect_model_gives_precision_and_recall_one_across_the_layers`, `test_box_on_a_labeled_empty_frame_is_a_false_positive_across_the_layers`, `test_shifted_box_below_threshold_is_a_miss_and_a_false_positive_across_the_layers`, `test_unreadable_video_is_counted_as_na_by_reason_across_the_layers`, `test_frame_beyond_the_video_is_na_frame_out_of_range_across_the_layers`, `test_only_the_requested_role_flows_through`, `test_ground_truth_pixels_match_hand_computed_boxes_across_the_layers`, `test_pipeline_writes_no_image_file`, `test_detections_survive_the_csv_boundary_between_layers`.
+
+### Task 7c: 정답으로 평가하기 `evaluation_run.py` (A단계)
+
+**배경:** "정답을 영상별로 묶어 탐지하고 평가한다"는 반복은 스크립트에 두지 않고 `src/`에 둔다(스크립트는 호출만 한다). 베이스라인 비교(Task 8)가 이것을 쓴다.
+
+**Files:** Create `src/wl_snatch/evaluation_run.py`, `tests/test_evaluation_run.py`. 통합 테스트(`tests/test_pipeline.py`)의 평가 반복도 이 함수를 쓴다.
+
+- `evaluate_ground_truth(truths: Sequence[GroundTruthFrame], video_paths: Mapping[str, Path], model: ModelFn, config: DetectorConfig, iou_threshold: float) -> DetectionMetrics`: `truths`를 `video_id`로 묶어(오름차순) 영상마다 `detect_frames`를 한 번 부르고 `evaluate_detections`로 평가한다. `video_paths`에 없는 `video_id`는 `ValueError`. 빈 `truths`는 모든 비율이 `None`이고 `frames_evaluated == 0`이다.
+
 ### Task 8: 모델 비교와 결정 기록
 
 **Files:**
-- Create: `src/wl_snatch/compare.py`, `scripts/compare_detectors.py`, `docs/decisions/0003-detector-baseline.md`
-- Test: `tests/test_compare.py`
+- Create: `src/wl_snatch/compare.py`, `src/wl_snatch/train.py`, `scripts/train_detector.py`, `scripts/compare_detectors.py`, `docs/decisions/0003-detector-baseline.md`
+- Test: `tests/test_compare.py`, `tests/test_train.py`
 
 **Interfaces:**
-- Consumes: `DetectorConfig`, `evaluate_detections`, `DetectionMetrics`.
+- Consumes: `DetectorConfig`, `evaluate_ground_truth`(Task 7c), `DetectionMetrics`, `weight_name`(학습의 시작점).
 - Produces:
+  - `train_detector(config: DetectorConfig, dataset_yaml: Path, project_dir: Path) -> Path`(`src/wl_snatch/train.py`): Ultralytics를 함수 안에서 가져와 `weight_name(config.model_name)`에서 시작해 단일 클래스 `plate`로 학습하고, 학습된 가중치 파일(`best.pt`)의 경로를 돌려준다. `project_dir`은 git 제외 폴더(`runs/` 아래)여야 하고, 그 경로의 검사는 `dataset.assert_ignored_output`을 쓴다. 학습 뒤 평가는 그 경로를 `DetectorConfig.weights_path`로 주어 `load_ultralytics_model`로 불러온다. `scripts/train_detector.py`는 호출만 한다.
   - `ComparisonRow(model_name: str, seed: int, imgsz: int, conf: float, iou_threshold: float, metrics: DetectionMetrics)`
   - `write_comparison_csv(rows: list[ComparisonRow], path: Path) -> None`
-  - `assert_single_axis(rows: list[ComparisonRow]) -> None` — `model_name`을 제외한 조건(seed, imgsz, conf, iou_threshold)이 모든 행에서 같지 않으면 `ValueError`.
+  - `assert_single_axis(rows: list[ComparisonRow]) -> None` — `model_name`을 제외한 조건(seed, imgsz, conf, iou_threshold)이 모든 행에서 같지 않으면 `ValueError`. 또한 모든 행의 `metrics.frames_evaluated`와 `metrics.na_reasons`가 같아야 하고(같은 프레임에서 비교), `frames_evaluated`가 0인 행이 있으면 `ValueError`다(평가된 프레임이 없는 비교는 `N/A`와 사유로 남긴다).
 
 - [ ] **Step 1: 실패하는 테스트 작성.**
   - `test_rows_with_different_seed_are_rejected`
   - `test_rows_differing_only_by_model_are_accepted`
+  - `test_rows_evaluated_on_different_frames_are_rejected`
+  - `test_row_with_zero_evaluated_frames_is_rejected`
   - `test_csv_contains_one_row_per_model_with_metrics`
   - `test_csv_writes_na_counts_and_none_metrics_as_empty`
 - [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_compare.py -v` → FAIL.
 - [ ] **Step 3: 구현.**
 - [ ] **Step 4: 통과 확인.** → 4 passed.
-- [ ] **Step 5: YOLO26 기준선 실행(B단계, 이슈 #2의 이미지 정책과 학습 구성 답변 뒤).** `scripts/train_detector.py`로 YOLO26을 Task 6b가 만든 학습용 폴더의 train으로 학습하고, 검증 영상의 라벨된 프레임에서 `detect_frames`(메모리 디코딩), `load_ground_truth`(Task 6a), 평가기를 돌린다. M2 8GB에서 메모리 때문에 실패하면 `imgsz`나 배치를 줄이고 그 사실을 기록한다.
+- [ ] **Step 5: YOLO26 기준선 실행(B단계, 이슈 #2의 이미지 정책과 학습 구성 답변 뒤).** `scripts/train_detector.py`(`train_detector`)로 YOLO26을 Task 6b가 만든 학습용 폴더의 train으로 학습하고, 검증 영상의 라벨된 프레임에서 `load_ground_truth`(Task 6a)와 `evaluate_ground_truth`(Task 7c, `detect_frames`로 메모리 디코딩)로 평가한다. M2 8GB에서 메모리 때문에 실패하면 `imgsz`나 배치를 줄이고 그 사실을 기록한다.
 - [ ] **Step 6: YOLO11, YOLOv8 비교 실행.** 모델만 바꾸고 나머지는 같게 한다. `scripts/compare_detectors.py`가 `assert_single_axis`를 먼저 호출한다.
 - [ ] **Step 7: 결정 기록.** `docs/decisions/0003-detector-baseline.md`에 비교 표, 조건, seed, 실패 사례(오탐 중심), `N/A` 개수를 적는다. 비교 표에는 학습·검증 영상 수와 프레임 수(N), 프레임 선정 규칙(단계 경계 + 사이 프레임), 음성 프레임 수, 그룹을 함께 적는다. 해석은 측정값 범위에서만 쓴다.
 - [ ] **Step 8: 커밋.**
