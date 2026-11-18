@@ -54,6 +54,18 @@ class FrameDetections:
             raise ValueError("N/A frame must not have boxes")
 
 
+@dataclass(frozen=True)
+class GroundTruthFrame:
+    """Plate boxes of one labeled frame, as (x1, y1, x2, y2) pixels.
+
+    Empty `boxes` means the frame has no plate; every prediction on it is a false positive.
+    """
+
+    video_id: str
+    frame_index: int
+    boxes: tuple[tuple[float, float, float, float], ...]
+
+
 def write_detections_csv(frames: list[FrameDetections], path: Path) -> None:
     """박스 하나를 한 행으로 쓴다. 박스가 없는 프레임은 좌표가 빈 한 행으로 쓴다."""
     with open(path, "w", newline="", encoding="utf-8") as f:

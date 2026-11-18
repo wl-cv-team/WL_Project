@@ -24,6 +24,8 @@ data/**/*.[hH][eE][iI][cC]
 # 모델 가중치, 산출물
 *.pt
 artifacts/
+# Ultralytics 학습 산출물(예시 프레임에 얼굴이 나올 수 있다)
+runs/
 
 # 환경
 .env

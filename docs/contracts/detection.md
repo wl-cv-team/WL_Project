@@ -35,6 +35,24 @@
 - `na_reason`은 `None` 또는 비어 있지 않은 문자열이다. 빈 문자열은 허용하지 않는다.
 - 박스는 NaN을 가질 수 없고 `x1 <= x2`, `y1 <= y2`여야 한다. 음수 좌표는 허용한다.
 
+## N/A 사유 값
+
+| 값 | 만드는 곳 | 뜻 |
+|---|---|---|
+| `video_unreadable` | 탐지기(`detect_frames`, `detect_video`) | 영상을 열 수 없다. `detect_frames`는 요청한 모든 프레임(음수 포함)에, `detect_video`는 프레임 0 하나에 쓴다 |
+| `frame_out_of_range` | 탐지기(`detect_frames`) | 요청한 프레임 번호가 음수이거나 디코딩한 프레임 수 이상이다 |
+| `prediction_missing` | 평가기(`evaluate_detections`) | 정답 프레임에 대응하는 예측 항목이 없다. 탐지 CSV에는 쓰이지 않고 `DetectionMetrics.na_reasons`에만 나타난다 |
+
+같은 실패를 다른 이름으로 쓰지 않는다. 사유 값을 더하면 이 표와 `tests/`를 함께 고친다.
+
+## 정답 형식 `GroundTruthFrame`
+
+구현: `src/wl_snatch/contracts.py`(`eval_detection`에서도 가져올 수 있다). 정답은 탐지 결과 CSV가 아니라 라벨 파일(`data/annotations/plate_boxes/`)과 분할 표에서 `ground_truth.load_ground_truth`가 만든다.
+
+- `GroundTruthFrame(video_id, frame_index, boxes)`: 프레임 하나의 정답. `boxes`는 `(x1, y1, x2, y2)` 픽셀 좌표(위의 좌표 규칙과 같다) 튜플이다.
+- `boxes`가 비어 있으면 가까운 쪽 원판이 없다고 확인한 프레임이다. 평가에서 이 프레임의 예측은 모두 오탐이다.
+- `frame_index`는 `FrameDetections`와 같은 뜻이다(디코딩 순서, 0부터). `(video_id, frame_index)`로 식별한다.
+
 ## 다음 단계
 
 바 경로 단계는 이 CSV(`read_detections_csv`가 반환하는 `list[FrameDetections]`)를 입력으로 받는다.

@@ -88,3 +88,9 @@ def test_plate_box_txt_is_tracked_by_gitignore_rules():
     # 원판 박스 라벨(한 줄 텍스트)과 범위 예외 표는 팀이 같은 값을 쓰도록 추적한다.
     assert _check_ignore("data/annotations/plate_boxes/a01_sn_f_01_f3.txt") == 1
     assert _check_ignore("data/annotations/plate_frame_ranges.csv") == 1
+
+
+def test_ultralytics_runs_folder_is_ignored():
+    # Ultralytics writes training output (example frames with faces) under runs/.
+    assert _check_ignore("runs/train/x.jpg") == 0
+    assert _check_ignore("runs/anything") == 0
