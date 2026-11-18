@@ -38,7 +38,7 @@
 | 탐지기 | `config.py`, `detector.py` | 설정으로 모델과 장치를 고르고, 프레임에서 탐지한다. 단일 클래스 `plate` 가중치만 쓴다 | A단계(Task 7) |
 | 정답으로 평가하기 | `evaluation_run.py` | 정답을 영상별로 묶어 탐지하고 평가한다 | A단계(Task 7c) |
 | COCO 사전학습 그대로 실행 | `coco_baseline.py` | 원래 COCO 클래스 이름을 유지해 실행하고 클래스별 개수와 추론 시간을 기록한다. 원판 평가와 연결하지 않는다 | A2단계(Task 8a), 모델은 아직 실행하지 않음 |
-| 데이터셋 내보내기 | `dataset.py` | 학습용 폴더와 `dataset.yaml`을 `data/derived/` 아래에 만든다 | 예정(Task 6b, fine-tuning을 시작할 때) |
+| 데이터셋 내보내기 | `dataset.py` | 학습용 폴더, `dataset.yaml`, 파일별 SHA256을 담은 `manifest.json`을 `data/derived/` 아래에 만들고 읽기 전용으로 점검한다 | 있음(Task 6b). 학습은 시작하지 않음 |
 | 학습 | `train.py` | 사전학습 가중치에서 시작해 `plate` 한 클래스로 학습하고 가중치 경로를 돌려준다 | 예정(Task 8) |
 | 비교 | `compare.py` | 한 번에 한 축만 바꾼 비교를 강제하고 CSV로 기록한다 | 예정(Task 8) |
 | 실행기 | `scripts/*.py` | 위 모듈을 호출만 한다. 로직을 두지 않는다 | 있음, 탐지 실행기는 A단계 |
@@ -50,7 +50,7 @@
 |---|---|---|
 | 얼굴이 담긴 이미지는 저장소에 올리지 않는다 | `.gitignore`(`data/` 아래 이미지 확장자와 `runs/` 제외), PR 템플릿, 이미지를 파일로 쓰지 않는 것을 확인하는 모듈별 테스트 | 있음 |
 | 평가와 탐지는 이미지 파일 없이 메모리에서 한다 | `frames.read_frames`, `detect_frames` | 있음 |
-| 학습용 이미지는 로컬 git 제외 폴더에만 둔다(2026-11-18 합의) | `dataset.assert_ignored_output` | 예정(Task 6b) |
+| 학습용 이미지는 로컬 git 제외 폴더에만 둔다(2026-11-18 합의) | `dataset.assert_ignored_output` | 있음(Task 6b) |
 | 같은 사람이 학습과 검증 양쪽에 없다 | 분할 표를 만들 때 `split.assert_no_person_leak`. `ground_truth.load_ground_truth`는 분할 표의 `role`을 그대로 따르며 `person_id`를 다시 검사하지 않는다 | 있음 |
 | 측정하지 못한 값은 채우지 않고 `N/A`와 사유를 남긴다 | `contracts.py`, `detector.py`, `eval_detection.py`(사유 값은 `docs/contracts/detection.md`) | 있음. 비교 CSV는 예정(Task 8) |
 | 한 번에 한 축만 바꾸고 같은 프레임에서 비교한다 | `compare.assert_single_axis` | 예정(Task 8) |
