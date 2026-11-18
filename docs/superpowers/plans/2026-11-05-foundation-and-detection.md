@@ -498,9 +498,9 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 
 **후속(Task 5f 머지 뒤):** Task 5f(`plate_boxes.compare_passes`)도 라벨 파일 이름을 해석하는데 규칙이 다르다(앞의 0, 유니코드 숫자, `.DS_Store` 같은 숨김 파일 처리). 엄격한 `parse_label_name`과 파일 순회를 `plate_boxes.py` 한 곳에 두고 `ground_truth`, `compare_passes`, 첫 번째 라벨 잠금이 함께 쓰게 통합한다. 어느 pass를 정답으로 쓸지도 그때 팀이 정한다.
 
-### Task 6b: 학습용 데이터셋 내보내기 (B단계 — fine-tuning을 시작할 때 실행)
+### Task 6b: 학습용 데이터셋 내보내기 (B단계 — fine-tuning 준비)
 
-**상태:** 이미지 정책이 (a) 로컬 git 제외 폴더 저장 허용으로 정해졌다(이슈 #2, 2026-11-18, `docs/decisions/0003-baseline-setup.md`). 다만 첫 실행이 fine-tuning 없는 COCO 사전학습 그대로 실행(Task 8a)으로 정정되어, 이 Task는 fine-tuning을 시작할 때 구현한다. 학습 구성은 학습 45장(원판 있음 39·없음 6), 검증 39장이다.
+**상태:** 이미지 정책이 (a) 로컬 git 제외 폴더 저장 허용으로 정해졌고(이슈 #2, 2026-11-18, `docs/decisions/0003-baseline-setup.md`), 동료가 fine-tuning 순서를 확정했다(이슈 #2 13:05Z, `docs/yolo26-experiment-plan.md`). 첫 단계가 "학습 데이터셋 생성·점검"이다. 학습 구성은 학습 45장(원판 있음 39·없음 6, 8명·8편), 검증 39장(6명·6편)이다. 이 Task는 데이터셋 만들기와 점검까지이며 **학습은 시작하지 않는다.**
 
 **배경:** YOLO 학습은 기본적으로 이미지 파일을 읽는다. `GroundTruthFrame` 목록(Task 6a)과 영상에서 프레임을 디코딩해 `out_dir`에 학습용 폴더를 만든다. `out_dir`은 git 제외 폴더여야 한다(`.gitignore`가 `data/` 아래 이미지 확장자를 이미 막는다). 얼굴이 나오는 이미지가 로컬 디스크에 생기며 저장소, 노트북 출력, PR 첨부에는 올리지 않는다.
 
@@ -512,23 +512,38 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 - Consumes: `GroundTruthFrame`(Task 6), `load_ground_truth`(Task 6a), `frames.read_frames`(Task 7).
 - Produces (`dataset.py`):
   - `assert_ignored_output(out_dir: Path, repo_root: Path) -> None`: `out_dir`이 저장소 안이고 `git check-ignore`로 제외되지 않으면 `ValueError`(저장소 밖 경로는 허용).
-  - `export_yolo_dataset(frames_by_role: Mapping[str, Sequence[GroundTruthFrame]], videos: pd.DataFrame, videos_root: Path, out_dir: Path, repo_root: Path) -> Path`: `out_dir`이 비어 있지 않으면 `ValueError`. 역할별로 `images/<role>/<video_id>_f<프레임>.jpg`와 `labels/<role>/<video_id>_f<프레임>.txt`(정규화 `0 cx cy w h`, 박스 없으면 빈 파일)를 쓰고, 상대경로 `dataset.yaml`(`path`, `train`, `val`, `names: {0: plate}`)을 쓴 뒤 그 경로를 돌려준다. 같은 `(video_id, frame)`이 두 역할에 있으면 `ValueError`.
+  - `export_yolo_dataset(frames_by_role: Mapping[str, Sequence[GroundTruthFrame]], videos: pd.DataFrame, videos_root: Path, out_dir: Path, repo_root: Path, jpeg_quality: int = 95) -> Path`:
+    - `out_dir`이 비어 있지 않으면 `ValueError`. 역할 키는 `train`, `validation`뿐이며 그 밖의 키는 `ValueError`.
+    - 역할별로 `images/<role>/<video_id>_f<프레임>.jpg`와 `labels/<role>/<video_id>_f<프레임>.txt`(정규화 `0 cx cy w h`, 소수 6자리, 박스 없으면 빈 파일)를 쓰고, 상대경로 `dataset.yaml`(`path`, `train`, `val`, `names: {0: plate}`)과 `manifest.json`을 쓴 뒤 `dataset.yaml` 경로를 돌려준다.
+    - `manifest.json`: 역할별 이미지 수, 원판 있음·없음 프레임 수, 영상 id 목록, `jpeg_quality`, 이미지와 라벨 파일별 SHA256, 전체 SHA256(파일 이름순으로 이어 붙인 값의 해시).
+    - 같은 `(video_id, frame)`이 두 역할에 있거나, `videos` 표의 같은 `person_id`가 두 역할에 모두 나오면 `ValueError`(사람 이름을 담는다). 프레임을 읽지 못하면 `ValueError`(영상 id와 프레임 번호를 담는다). 어떤 이유로든 실패하면 이 함수가 `out_dir` 아래에 만든 것을 지우고 오류를 다시 낸다.
+    - 한 이미지의 크기는 `videos` 표의 `width`, `height`와 달라도 디코딩한 프레임의 실제 크기로 박스를 정규화한다(표와 다르면 `ValueError`).
+  - `verify_exported_dataset(dataset_yaml: Path) -> DatasetReport`: 읽기 전용 점검. 모든 이미지에 같은 이름의 라벨이 있고 그 반대도 같다, 라벨 줄은 `0 cx cy w h`이고 값이 0 이상 1 이하이며 박스가 이미지 안에 있다, 파일의 SHA256이 `manifest.json`과 같다, `train`과 `val` 사이에 같은 파일 이름이 없다. 어긋나면 `ValueError`(어느 파일인지 담는다). `DatasetReport`는 frozen dataclass이며 역할별 이미지 수, 원판 있음·없음 수, 전체 해시를 가진다.
+- `scripts/build_plate_dataset.py`: 인자 `--videos-csv`, `--split`, `--boxes-dir`, `--ranges`, `--videos-dir`, `--out`(기본 `data/derived/plate_dataset`). 두 역할을 `load_ground_truth`로 읽어 내보내고 `verify_exported_dataset`을 부른 뒤 역할별 개수와 전체 해시를 텍스트로 출력한다. 이미지를 화면이나 다른 곳으로 내보내지 않는다.
 - 이 모듈 밖에서는 학습용 이미지 파일을 만들지 않는다.
 - `validation` 역할은 `dataset.yaml`의 `val` 키로 쓰고 폴더 이름은 `validation`으로 둔다(역할에서 폴더와 키로의 대응을 코드에 명시한다).
-- 이 Task에서 `data/README.md`의 "이미지를 파일로 만드는 코드는 두지 않고" 문장을, 로컬 git 제외 폴더에만 만드는 학습용 이미지에 맞게 고친다(정책이 (a)로 정해진 경우).
+- 이 Task에서 `data/README.md`가 학습용 이미지 생성을 허용하는 문장과 어긋나지 않는지 확인한다(이미 `data/derived/` 예외가 있다).
 
-- [ ] **Step 1: 실패하는 테스트 작성** (합성 영상과 합성 `GroundTruthFrame`).
+- [ ] **Step 1: 실패하는 테스트 작성** (합성 영상과 합성 `GroundTruthFrame`. 모델과 네트워크를 쓰지 않는다).
   - `test_export_places_frames_by_role_and_writes_yaml`
   - `test_yaml_uses_relative_paths_and_single_class_plate`
-  - `test_label_text_is_normalized_from_pixel_box_and_empty_for_no_plate`
+  - `test_label_text_is_normalized_from_pixel_box_and_empty_for_no_plate` (픽셀 박스는 손으로 계산한 값, 비정방 프레임으로 가로·세로 바뀜을 잡는다)
+  - `test_empty_label_frames_are_exported_with_empty_label_files`
   - `test_export_rejects_non_empty_output_dir`
   - `test_assert_ignored_output_rejects_tracked_path_inside_repo` / `test_assert_ignored_output_allows_ignored_and_outside_paths`
   - `test_same_frame_in_two_roles_raises_value_error`
-  - `test_no_person_appears_in_both_role_folders`
-  - `test_export_writes_images_only_inside_out_dir`
+  - `test_same_person_in_both_roles_raises_value_error`
+  - `test_unreadable_frame_raises_and_cleans_up_what_it_created`
+  - `test_manifest_records_counts_and_sha256_of_every_file`
+  - `test_verify_accepts_a_fresh_export_and_rejects_a_modified_label_or_image`
+  - `test_verify_rejects_label_outside_the_image_and_orphan_files`
+  - `test_export_writes_files_only_inside_out_dir`
+  - `test_dataset_module_import_does_not_import_ultralytics`
 - [ ] **Step 2~4:** 실패 확인, 구현, 통과 확인(전체 테스트와 `ruff`).
-- [ ] **Step 5: 실제 실행(B단계).** PR #16의 라벨이 `main`에 들어오고 정책이 정해진 뒤 `data/derived/plate_dataset/`에 만든다. 학습 39, 검증 39장을 확인한다.
-- [ ] **Step 6: 커밋.**
+- [ ] **Step 5: 커밋.** 이미지, 영상, 가중치, 노트북 출력을 커밋하지 않는다.
+- [ ] **Step 6: 실제 실행(Step 5 뒤, 컨트롤러).** `main`의 라벨로 `data/derived/plate_dataset/`에 만들어 학습 45(원판 있음 39·없음 6), 검증 39장과 전체 해시를 확인한다. 만든 이미지는 로컬에만 두고 어디에도 올리지 않는다.
+
+**이 Task에서 제외:** 학습 실행, 증강, 이미지가 아닌 W&B·FiftyOne 연결, 데이터 보강, 이미지 시각화 파일 저장.
 
 ### Task 7: 탐지기와 설정 (A단계)
 
