@@ -317,3 +317,15 @@ def test_range_exception_of_other_role_video_still_raises(tmp_path, videos, spli
     write(boxes, "a02_sn_f_01", 30, "")
     with pytest.raises(ValueError, match=r"a02_sn_f_01_f30\.txt"):
         load_ground_truth(boxes, videos, split, "train", ranges)
+
+
+@pytest.mark.parametrize("column", ["video_id", "role"])
+def test_split_missing_column_raises_value_error_naming_it(tmp_path, videos, split, column):
+    with pytest.raises(ValueError, match=column):
+        load_ground_truth(tmp_path, videos, split.drop(columns=[column]), "train")
+
+
+@pytest.mark.parametrize("column", ["video_id", "width", "height", "frame_count"])
+def test_videos_missing_column_raises_value_error_naming_it(tmp_path, videos, split, column):
+    with pytest.raises(ValueError, match=column):
+        load_ground_truth(tmp_path, videos.drop(columns=[column]), split, "train")

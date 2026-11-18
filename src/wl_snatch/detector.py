@@ -13,12 +13,12 @@ without a remaining box is a zero-detection frame (`na_reason=None`, no boxes).
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import numpy as np
 
-from wl_snatch.config import DetectorConfig, resolve_device, weight_name
+from wl_snatch.config import DetectorConfig, resolve_device
 from wl_snatch.contracts import BoxDetection, FrameDetections
 from wl_snatch.frames import VideoUnreadableError, check_readable, count_frames, read_frames
 
@@ -86,23 +86,44 @@ def detect_video(
 ) -> list[FrameDetections]:
     """`detect_frames` over every decoded frame.
 
-    The number of frames is found by decoding once (`count_frames`). When that
-    fails (unreadable video) the number of frames is unknown, so there is no
-    frame number to mark N/A and the result is an empty list.
+    The number of frames is found by decoding once (`count_frames`). When the
+    video cannot be opened the number of frames is unknown, so the result is one
+    N/A entry for frame 0 with reason `video_unreadable`.
     """
     try:
         total = count_frames(video_path)
-    except ValueError:
-        return []
+    except VideoUnreadableError:
+        return [_na(video_id, 0, VIDEO_UNREADABLE)]
     return detect_frames(video_path, video_id, range(total), model, config)
 
 
-def load_ultralytics_model(config: DetectorConfig) -> ModelFn:
-    """Load Ultralytics weights named by `config.model_name` and wrap them as a ModelFn.
+_NOT_PLATE_MODEL = (
+    "the model must be a single-class plate detector trained for this project; "
+    "COCO-pretrained weights (yolo26n.pt and the like) do not detect plates"
+)
 
-    Ultralytics and torch are imported here only. Not covered by tests: it needs
-    the weight file and network access.
+
+def check_plate_names(names: Mapping[int, str]) -> None:
+    """Raise ValueError unless the model's class names are exactly {0: "plate"}."""
+    if dict(names) != {0: LABEL}:
+        shown = dict(list(dict(names).items())[:5])
+        suffix = " ..." if len(names) > 5 else ""
+        raise ValueError(f"{_NOT_PLATE_MODEL}; class names found: {shown}{suffix}")
+
+
+def load_ultralytics_model(config: DetectorConfig) -> ModelFn:
+    """Load the plate-detector weights at `config.weights_path` and wrap them as a ModelFn.
+
+    `weights_path` is required: the pretrained names in `WEIGHT_NAMES` are
+    COCO-pretrained starting points for training and do not detect plates. The
+    loaded model's class names must be exactly {0: "plate"} (`check_plate_names`),
+    so no other class is ever written with the label "plate".
+
+    Ultralytics and torch are imported here only, after the path check. Not
+    covered by tests: it needs a weight file.
     """
+    if config.weights_path is None:
+        raise ValueError(f"weights_path is required: {_NOT_PLATE_MODEL}")
     import torch
     from ultralytics import YOLO
 
@@ -111,11 +132,11 @@ def load_ultralytics_model(config: DetectorConfig) -> ModelFn:
         mps_available=torch.backends.mps.is_available(),
         cuda_available=torch.cuda.is_available(),
     )
-    weights = weight_name(config.model_name)
-    _log.info("loading %s on device %s", weights, device)
+    _log.info("loading %s (%s) on device %s", config.weights_path, config.model_name, device)
     if reason is not None:
         _log.warning("device fallback: %s", reason)
-    yolo = YOLO(weights)
+    yolo = YOLO(str(config.weights_path))
+    check_plate_names(yolo.names)
 
     def model(frame: np.ndarray) -> list[tuple[float, float, float, float, float]]:
         result = yolo(

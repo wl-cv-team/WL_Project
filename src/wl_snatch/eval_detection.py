@@ -11,23 +11,11 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from wl_snatch.contracts import FrameDetections
+from wl_snatch.contracts import FrameDetections, GroundTruthFrame  # noqa: F401 (re-exported)
 
 Box = tuple[float, float, float, float]
 
 PREDICTION_MISSING = "prediction_missing"
-
-
-@dataclass(frozen=True)
-class GroundTruthFrame:
-    """Plate boxes of one labeled frame, as (x1, y1, x2, y2) pixels.
-
-    Empty `boxes` means the frame has no plate; every prediction on it is a false positive.
-    """
-
-    video_id: str
-    frame_index: int
-    boxes: tuple[Box, ...]
 
 
 @dataclass(frozen=True)

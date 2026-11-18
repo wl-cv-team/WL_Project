@@ -6,7 +6,8 @@ import numpy as np
 import pytest
 
 from wl_snatch.config import DetectorConfig
-from wl_snatch.detector import detect_frames, detect_video
+from wl_snatch.contracts import FrameDetections
+from wl_snatch.detector import check_plate_names, detect_frames, detect_video
 
 CONFIG = DetectorConfig(model_name="yolo26", conf=0.25)
 
@@ -111,8 +112,52 @@ def test_detect_video_covers_every_frame(video: Path):
     assert len(model.calls) == 5
 
 
-def test_detect_video_unreadable_returns_empty_list(tmp_path: Path):
-    assert detect_video(tmp_path / "absent.mp4", "v1", FakeModel(), CONFIG) == []
+def test_detect_video_unreadable_returns_one_na_entry(tmp_path: Path):
+    result = detect_video(tmp_path / "absent.mp4", "v1", FakeModel(), CONFIG)
+    assert result == [FrameDetections("v1", 0, (), "video_unreadable")]
+
+
+def test_check_plate_names_accepts_single_plate_class():
+    assert check_plate_names({0: "plate"}) is None
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        {0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 4: "airplane", 5: "bus"},
+        {},
+        {0: "plate", 1: "person"},
+        {0: "plates"},
+        {1: "plate"},
+    ],
+)
+def test_check_plate_names_rejects_other_names_and_shows_them(names):
+    with pytest.raises(ValueError) as excinfo:
+        check_plate_names(names)
+    message = str(excinfo.value)
+    assert "plate" in message and "COCO" in message
+    for name in list(names.values())[:5]:
+        assert name in message
+    if len(names) > 5:
+        assert "bus" not in message  # only the first 5 names are shown
+
+
+def test_load_ultralytics_model_without_weights_path_raises_before_importing_ultralytics():
+    code = (
+        "import sys\n"
+        "from wl_snatch.config import DetectorConfig\n"
+        "from wl_snatch.detector import load_ultralytics_model\n"
+        "try:\n"
+        "    load_ultralytics_model(DetectorConfig(model_name='yolo26'))\n"
+        "except ValueError:\n"
+        "    pass\n"
+        "else:\n"
+        "    sys.exit(2)\n"
+        "bad = [m for m in sys.modules if m == 'ultralytics' or m.startswith('ultralytics.')]\n"
+        "sys.exit(1 if bad else 0)\n"
+    )
+    completed = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_module_import_does_not_import_ultralytics():

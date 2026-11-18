@@ -12,7 +12,9 @@ import pytest
 
 from wl_snatch.config import DetectorConfig
 from wl_snatch.detector import detect_frames
+from wl_snatch.contracts import read_detections_csv, write_detections_csv
 from wl_snatch.eval_detection import DetectionMetrics, evaluate_detections
+from wl_snatch.evaluation_run import evaluate_ground_truth
 from wl_snatch.ground_truth import load_ground_truth
 
 WIDTH, HEIGHT = 64, 48
@@ -71,42 +73,48 @@ class World:
     def run(
         self,
         role: str,
-        model_for: Callable[[str, list[tuple[float, ...]]], Callable],
+        model,
         video_dir_override: Path | None = None,
     ) -> DetectionMetrics:
         truths = self.truths(role)
-        predictions = []
+        directory = video_dir_override or self.videos_dir
+        paths = {t.video_id: directory / f"{t.video_id}.mp4" for t in truths}
+        return evaluate_ground_truth(truths, paths, model, CONFIG, 0.5)
+
+    def detect(self, role: str, model) -> list:
+        """Per-frame detections for the labeled frames of `role` (same loop as run)."""
+        truths = self.truths(role)
+        result = []
         for video_id in sorted({t.video_id for t in truths}):
-            mine = [t for t in truths if t.video_id == video_id]
-            path = (video_dir_override or self.videos_dir) / f"{video_id}.mp4"
-            model = model_for(video_id, [t.boxes for t in mine])
-            predictions += detect_frames(path, video_id, [t.frame_index for t in mine], model, CONFIG)
-        return evaluate_detections(predictions, truths, 0.5)
+            frames = [t.frame_index for t in truths if t.video_id == video_id]
+            result += detect_frames(self.video_path(video_id), video_id, frames, model, CONFIG)
+        return result
 
 
 def scripted(per_call):
-    """Fake model factory returning `per_call[video_id][n]` (a list of boxes) on the n-th call.
+    """Fake model returning the n-th list of boxes on the n-th call.
 
-    detect_frames calls the model once per requested frame, in ascending frame
-    order, so the n-th call is the n-th labeled frame of that video (the
+    `per_call` maps video_id to one list of boxes per labeled frame, ascending.
+    evaluate_ground_truth visits videos in ascending id order and detect_frames
+    calls the model once per requested frame in ascending frame order, so the
+    flat call sequence is the videos sorted by id, frames ascending (the
     synthetic frames themselves do not identify their index uniquely). The boxes
     are the hand-computed pixel constants above, never values read back from the
     ground truth layer, so a wrong label-to-pixel conversion cannot cancel out.
     """
+    calls = iter([boxes for video_id in sorted(per_call) for boxes in per_call[video_id]])
 
-    def factory(video_id, boxes_per_frame):
-        calls = iter(per_call[video_id])
+    def model(frame):
+        return [(*box, 0.9) for box in next(calls)]
 
-        def model(frame):
-            return [(*box, 0.9) for box in next(calls)]
-
-        return model
-
-    return factory
+    return model
 
 
 # Frames in ascending order: a01 -> 0 (A), 2 (B), 4 (empty); b01 -> 1 (A), 3 (B).
-perfect_model = scripted({"a01": [[BOX_A], [BOX_B], []], "b01": [[BOX_A], [BOX_B]]})
+def perfect_model(role: str):
+    per_video = {"a01": [[BOX_A], [BOX_B], []], "b01": [[BOX_A], [BOX_B]]}
+    wanted = "a01" if role == "train" else "b01"
+    return scripted({wanted: per_video[wanted]})
 
 
 def make_world(tmp_path: Path, make_video) -> World:
@@ -147,7 +155,7 @@ def test_perfect_model_gives_precision_and_recall_one_across_the_layers(
     tmp_path: Path, make_video
 ):
     world = make_world(tmp_path, make_video)
-    metrics = world.run("train", perfect_model)
+    metrics = world.run("train", perfect_model("train"))
     labeled = len(world.truths("train"))
     assert labeled == 3
     assert metrics.precision == 1.0
@@ -162,8 +170,8 @@ def test_box_on_a_labeled_empty_frame_is_a_false_positive_across_the_layers(
 ):
     world = make_world(tmp_path, make_video)
     # train frames in order: 0 (box A), 2 (box B), 4 (empty label)
-    model_for = scripted({"a01": [[BOX_A], [BOX_B], [BOX_A]]})
-    metrics = world.run("train", model_for)
+    model = scripted({"a01": [[BOX_A], [BOX_B], [BOX_A]]})
+    metrics = world.run("train", model)
     assert metrics.false_positives == 1
     assert metrics.true_positives == 2
     assert metrics.frames_evaluated == 3
@@ -176,8 +184,8 @@ def test_shifted_box_below_threshold_is_a_miss_and_a_false_positive_across_the_l
     tmp_path: Path, make_video
 ):
     world = make_world(tmp_path, make_video)
-    model_for = scripted({"a01": [[BOX_SHIFTED], [BOX_B], []]})
-    metrics = world.run("train", model_for)
+    model = scripted({"a01": [[BOX_SHIFTED], [BOX_B], []]})
+    metrics = world.run("train", model)
     assert metrics.true_positives == 1
     assert metrics.false_negatives == 1
     assert metrics.false_positives == 1
@@ -191,7 +199,7 @@ def test_unreadable_video_is_counted_as_na_by_reason_across_the_layers(
 ):
     world = make_world(tmp_path, make_video)
     missing = tmp_path / "no_videos_here"
-    metrics = world.run("train", perfect_model, video_dir_override=missing)
+    metrics = world.run("train", perfect_model("train"), video_dir_override=missing)
     labeled = len(world.truths("train"))
     assert metrics.frames_na == labeled
     assert metrics.na_reasons == {"video_unreadable": labeled}
@@ -224,8 +232,8 @@ def test_only_the_requested_role_flows_through(tmp_path: Path, make_video):
     validation = world.truths("validation")
     assert {t.video_id for t in train} == {"a01"}
     assert {t.video_id for t in validation} == {"b01"}
-    train_metrics = world.run("train", perfect_model)
-    validation_metrics = world.run("validation", perfect_model)
+    train_metrics = world.run("train", perfect_model("train"))
+    validation_metrics = world.run("validation", perfect_model("validation"))
     assert train_metrics.frames_evaluated == 3
     assert validation_metrics.frames_evaluated == 2
     assert train_metrics.true_positives == 2
@@ -235,8 +243,8 @@ def test_only_the_requested_role_flows_through(tmp_path: Path, make_video):
 
 def test_pipeline_writes_no_image_file(tmp_path: Path, make_video):
     world = make_world(tmp_path, make_video)
-    world.run("train", perfect_model)
-    world.run("validation", perfect_model)
+    world.run("train", perfect_model("train"))
+    world.run("validation", perfect_model("validation"))
     files = {p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file()}
     expected = {
         "videos/a01.mp4",
@@ -248,3 +256,29 @@ def test_pipeline_writes_no_image_file(tmp_path: Path, make_video):
         "boxes/b01_f3.txt",
     }
     assert files == expected
+
+
+def test_detections_survive_the_csv_boundary_between_layers(tmp_path: Path, make_video):
+    world = World(tmp_path, make_video)
+    # frames: 1 = box, 3 = zero detections, 6 and 7 = beyond the 5 decoded frames (N/A)
+    world.add_video("c01", "train", frame_count=8)
+    world.label("c01", 1, LINE_A)
+    world.label("c01", 3, LINE_B)
+    world.label("c01", 6, LINE_A)
+    world.label("c01", 7, LINE_B)
+    truths = world.truths("train")
+    detections = world.detect("train", scripted({"c01": [[BOX_A], []]}))
+    assert [d.na_reason for d in detections] == [
+        None,
+        None,
+        "frame_out_of_range",
+        "frame_out_of_range",
+    ]
+    csv_path = tmp_path / "detections.csv"
+    write_detections_csv(detections, csv_path)
+    restored = read_detections_csv(csv_path)
+    in_memory = evaluate_detections(detections, truths, 0.5)
+    assert evaluate_detections(restored, truths, 0.5) == in_memory
+    assert in_memory.frames_evaluated == 2
+    assert in_memory.na_reasons == {"frame_out_of_range": 2}
+    assert (in_memory.true_positives, in_memory.false_negatives) == (1, 1)

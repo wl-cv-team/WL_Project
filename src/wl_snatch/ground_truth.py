@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from wl_snatch.eval_detection import GroundTruthFrame
+from wl_snatch.contracts import GroundTruthFrame
 from wl_snatch.plate_boxes import PlateBoxStore, read_frame_ranges
 
 ROLES = ("train", "validation")
@@ -47,6 +47,12 @@ class GroundTruthReport:
     empty: int
     skipped_not_in_split: int
     video_ids: tuple[str, ...]
+
+
+def _require_columns(table: pd.DataFrame, columns: tuple[str, ...], what: str) -> None:
+    missing = [c for c in columns if c not in table.columns]
+    if missing:
+        raise ValueError(f"{what} table is missing columns {missing}")
 
 
 def _unique_rows(table: pd.DataFrame, what: str) -> dict[str, pd.Series]:
@@ -93,6 +99,8 @@ def load_ground_truth(
     """
     if role not in ROLES:
         raise ValueError(f"role {role!r} is not one of {ROLES}")
+    _require_columns(split, ("video_id", "role"), "split")
+    _require_columns(videos, ("video_id", "width", "height", "frame_count"), "videos")
     split_rows = _unique_rows(split, "split")
     for video_id, row in split_rows.items():
         if row["role"] not in ROLES:

@@ -204,3 +204,23 @@ def test_threshold_one_matches_identical_box_but_not_near_identical():
     assert (same.true_positives, same.false_positives, same.false_negatives) == (1, 0, 0)
     off = evaluate_detections([_pred(0, [(*near, 0.9)])], [_truth(0, [box])], 1.0)
     assert (off.true_positives, off.false_positives, off.false_negatives) == (0, 1, 1)
+
+
+def test_empty_truths_give_none_metrics_without_error():
+    metrics = evaluate_detections([], [], 0.5)
+    assert metrics.precision is None
+    assert metrics.recall is None
+    assert metrics.false_positives_per_frame is None
+    assert metrics.frames_evaluated == 0
+    assert metrics.frames_na == 0
+    assert metrics.na_reasons == {}
+
+
+def test_empty_predictions_with_truth_boxes_give_prediction_missing():
+    truths = [_truth(0, [BOX]), _truth(1)]
+    metrics = evaluate_detections([], truths, 0.5)
+    assert metrics.frames_evaluated == 0
+    assert metrics.frames_na == 2
+    assert metrics.na_reasons == {"prediction_missing": 2}
+    assert metrics.recall is None
+    assert metrics.false_negatives == 0

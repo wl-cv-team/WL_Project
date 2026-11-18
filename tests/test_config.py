@@ -86,3 +86,18 @@ def test_resolve_device_accepts_indexed_cuda():
     assert reason and "cuda:1" in reason
     with pytest.raises(ValueError, match="cuda:x"):
         resolve_device("cuda:x", True, True)
+
+
+def test_config_stores_weights_path_as_given():
+    from pathlib import Path
+
+    assert DetectorConfig(model_name="yolo26").weights_path is None
+    path = Path("artifacts/plate.pt")
+    assert DetectorConfig(model_name="yolo26", weights_path=path).weights_path == path
+    assert DetectorConfig(model_name="yolo26", weights_path="plate.pt").weights_path == "plate.pt"
+
+
+def test_config_rejects_empty_or_wrong_type_weights_path():
+    for value in ("", 5, b"x"):
+        with pytest.raises(ValueError, match="weights_path"):
+            DetectorConfig(model_name="yolo26", weights_path=value)

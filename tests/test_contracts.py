@@ -144,3 +144,17 @@ def test_missing_required_column_rejected(tmp_path: Path):
         read_detections_csv(path)
     assert str(path) in str(exc.value)
     assert "y1" in str(exc.value)
+
+
+def test_ground_truth_frame_is_frozen_and_allows_no_boxes():
+    import dataclasses
+
+    from wl_snatch.contracts import GroundTruthFrame
+
+    frame = GroundTruthFrame("v1", 3, ())
+    assert frame.boxes == ()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        frame.frame_index = 4
+    from wl_snatch import eval_detection
+
+    assert eval_detection.GroundTruthFrame is GroundTruthFrame

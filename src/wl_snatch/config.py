@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
-# yolo26n.pt is listed in the Ultralytics YOLO26 docs. The other two are the
-# standard Ultralytics names; see docs/decisions/0001-environment.md.
+# yolo26n.pt was confirmed in the official Ultralytics docs. The other two are
+# standard Ultralytics names that were not confirmed in an official table (see
+# docs/decisions/0001-environment.md). All three are COCO-pretrained starting
+# points for training, not plate detectors: they do not detect plates.
 WEIGHT_NAMES = {"yolo26": "yolo26n.pt", "yolo11": "yolo11n.pt", "yolov8": "yolov8n.pt"}
 
 _DEVICES = ("cpu", "mps", "cuda")
@@ -20,8 +23,17 @@ class DetectorConfig:
     device: str = "auto"
     seed: int = 0
     epochs: int = 50
+    # Trained plate-detector weights to run. `model_name` stays the architecture
+    # name (for records and for `weight_name`, which training will use).
+    weights_path: Path | str | None = None
 
     def __post_init__(self) -> None:
+        if self.weights_path is not None and (
+            not isinstance(self.weights_path, (Path, str)) or not str(self.weights_path)
+        ):
+            raise ValueError(
+                f"weights_path must be None or a non-empty path, got {self.weights_path!r}"
+            )
         if not isinstance(self.model_name, str) or not self.model_name:
             raise ValueError(f"model_name must be a non-empty string, got {self.model_name!r}")
         for field in ("imgsz", "epochs"):
