@@ -158,12 +158,15 @@ class DetectionViewSession:
         """Drawn frame and info lines (frame number, role, class counts) of the current frame."""
         index = self.current_frame_index
         frame = self._frames.get(index)
+        unreadable = frame is None
         if frame is None:
             frame = np.zeros((*PLACEHOLDER_SIZE, 3), dtype=np.uint8)
         detection = self._detections[index]
         lines = [f"프레임 {index}"]
         if index in self._roles:
             lines.append(f"역할: {self._roles[index]}")
+        if unreadable and detection.na_reason is None:
+            lines.append("프레임을 읽지 못함: 검은 화면 위에 표시")
         image = frame
         if detection.na_reason is not None:
             lines.append(f"N/A: {detection.na_reason}")

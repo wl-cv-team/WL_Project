@@ -221,14 +221,23 @@ def test_view_png_is_encoded_in_memory_and_viewer_writes_no_image_file(
 
     monkeypatch.setattr(cv2, "imwrite", refuse)
     monkeypatch.setattr(cv2, "VideoWriter", refuse)
-    before = set(tmp_path.rglob("*"))
+    cwd = Path.cwd()
+    tree_before = {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*")}
+    cwd_before = {p.name for p in cwd.iterdir()}
     session = DetectionViewSession(
-        video, "v1", frames_of((0, [box(0, 5, 5, 20, 20)])), truths=[GroundTruthFrame("v1", 0, ())]
+        video,
+        "v1",
+        frames_of((0, [box(0, 5, 5, 20, 20)]), (2, [])),
+        truths=[GroundTruthFrame("v1", 0, ())],
     )
+    session.step(1)
+    session.goto(0)
+    session.view(show_truth=True, label_filter={"person"}, min_confidence=0.5)
     png = session.view_png(show_truth=True)
     assert png.startswith(b"\x89PNG")
     assert session.show() is not None
-    assert set(tmp_path.rglob("*")) == before
+    assert {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*")} == tree_before
+    assert {p.name for p in cwd.iterdir()} == cwd_before
 
 
 def test_module_import_does_not_import_ultralytics_or_ipywidgets():
@@ -282,3 +291,30 @@ def test_build_view_session_runs_the_model_only_on_labeled_frames_of_that_video(
     assert "역할: validation" in other.view()[1]
     with pytest.raises(ValueError, match="zzz"):
         build_view_session(CONFIG, model, "zzz", videos_dir, boxes_dir, videos, split)
+
+
+def test_label_text_and_confidence_are_drawn_above_the_box():
+    # box top edge at y=30; text is drawn on rows above it (about y 17..26), the
+    # rectangle itself only touches rows 30..45, so any pixel in rows 15..28 is text.
+    def region(confidence):
+        image = draw_detections(
+            black(), [box(0, 10, 30, 50, 45, confidence, "person")], color_for=lambda label: GREEN
+        )
+        return image[15:29, 10:60]
+
+    high, low = region(0.9), region(0.1)
+    assert high.any() and low.any()
+    assert not np.array_equal(high, low)  # the confidence text changes the pixels
+    other = draw_detections(
+        black(), [box(0, 10, 30, 50, 45, 0.9, "frisbee")], color_for=lambda label: GREEN
+    )[15:29, 10:60]
+    assert not np.array_equal(high, other)  # the label text changes the pixels
+
+
+def test_unreadable_frame_with_boxes_says_it_could_not_be_read(video: Path):
+    session = DetectionViewSession(video, "v1", frames_of((9, [box(9, 5, 5, 20, 20)])))
+    image, lines = session.view()
+    assert "프레임을 읽지 못함: 검은 화면 위에 표시" in lines
+    assert px(image, 20, 12) == class_color("person")  # boxes still drawn on the placeholder
+    readable = DetectionViewSession(video, "v1", frames_of((2, [box(2, 5, 5, 20, 20)])))
+    assert not any("읽지 못함" in line for line in readable.view()[1])
