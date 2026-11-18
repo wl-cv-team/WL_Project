@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from wl_snatch.config import DetectorConfig
 from wl_snatch.detector import detect_frames
@@ -18,12 +19,16 @@ WIDTH, HEIGHT = 64, 48
 CONFIG = DetectorConfig(model_name="yolo26", conf=0.25)
 
 # Pixel boxes (x1, y1, x2, y2) and their normalized label lines "0 cx cy w h".
-BOX_A = (16.0, 12.0, 48.0, 36.0)
-LINE_A = "0 0.500000 0.500000 0.500000 0.500000\n"
-BOX_B = (0.0, 0.0, 32.0, 24.0)
-LINE_B = "0 0.250000 0.250000 0.500000 0.500000\n"
-# Same size as BOX_A, shifted 24 px right: IoU = 8*24 / (2*768 - 8*24) < 0.5.
-BOX_SHIFTED = (40.0, 12.0, 72.0, 36.0)
+#   BOX_A: cx = 48/64, cy = 24/48, w = 16/64, h = 24/48.
+#   BOX_B: cx = 32/64, cy = 12/48, w = 16/64, h = 24/48.
+# The boxes are narrow and off-centre on purpose, so mixing up width and height
+# in the conversion drops the IoU well below 0.5.
+BOX_A = (40.0, 12.0, 56.0, 36.0)
+LINE_A = "0 0.750000 0.500000 0.250000 0.500000\n"
+BOX_B = (24.0, 0.0, 40.0, 24.0)
+LINE_B = "0 0.500000 0.250000 0.250000 0.500000\n"
+# Same size as BOX_A, 24 px to the left: no overlap, IoU 0.
+BOX_SHIFTED = (16.0, 12.0, 32.0, 36.0)
 
 
 class World:
@@ -79,24 +84,15 @@ class World:
         return evaluate_detections(predictions, truths, 0.5)
 
 
-def echo_truth(video_id, boxes_per_frame):
-    """Fake model that returns the truth boxes of the frame it is called for.
+def scripted(per_call):
+    """Fake model factory returning `per_call[video_id][n]` (a list of boxes) on the n-th call.
 
     detect_frames calls the model once per requested frame, in ascending frame
-    order, and `truths` is sorted by frame; so the n-th call is the n-th truth frame.
-    A call counter is therefore a reliable key (the synthetic frames themselves
-    do not identify their index uniquely).
+    order, so the n-th call is the n-th labeled frame of that video (the
+    synthetic frames themselves do not identify their index uniquely). The boxes
+    are the hand-computed pixel constants above, never values read back from the
+    ground truth layer, so a wrong label-to-pixel conversion cannot cancel out.
     """
-    calls = iter(boxes_per_frame)
-
-    def model(frame):
-        return [(*box, 0.9) for box in next(calls)]
-
-    return model
-
-
-def scripted(per_call):
-    """Fake model factory returning `per_call[n]` (a list of boxes) on the n-th call."""
 
     def factory(video_id, boxes_per_frame):
         calls = iter(per_call[video_id])
@@ -107,6 +103,10 @@ def scripted(per_call):
         return model
 
     return factory
+
+
+# Frames in ascending order: a01 -> 0 (A), 2 (B), 4 (empty); b01 -> 1 (A), 3 (B).
+perfect_model = scripted({"a01": [[BOX_A], [BOX_B], []], "b01": [[BOX_A], [BOX_B]]})
 
 
 def make_world(tmp_path: Path, make_video) -> World:
@@ -121,11 +121,33 @@ def make_world(tmp_path: Path, make_video) -> World:
     return world
 
 
+def test_ground_truth_pixels_match_hand_computed_boxes_across_the_layers(
+    tmp_path: Path, make_video
+):
+    world = make_world(tmp_path, make_video)
+    expected = {
+        ("a01", 0): BOX_A,
+        ("a01", 2): BOX_B,
+        ("a01", 4): None,
+        ("b01", 1): BOX_A,
+        ("b01", 3): BOX_B,
+    }
+    for role in ("train", "validation"):
+        for truth in world.truths(role):
+            box = expected.pop((truth.video_id, truth.frame_index))
+            if box is None:
+                assert truth.boxes == ()
+            else:
+                assert len(truth.boxes) == 1
+                assert truth.boxes[0] == pytest.approx(box)
+    assert expected == {}
+
+
 def test_perfect_model_gives_precision_and_recall_one_across_the_layers(
     tmp_path: Path, make_video
 ):
     world = make_world(tmp_path, make_video)
-    metrics = world.run("train", echo_truth)
+    metrics = world.run("train", perfect_model)
     labeled = len(world.truths("train"))
     assert labeled == 3
     assert metrics.precision == 1.0
@@ -169,7 +191,7 @@ def test_unreadable_video_is_counted_as_na_by_reason_across_the_layers(
 ):
     world = make_world(tmp_path, make_video)
     missing = tmp_path / "no_videos_here"
-    metrics = world.run("train", echo_truth, video_dir_override=missing)
+    metrics = world.run("train", perfect_model, video_dir_override=missing)
     labeled = len(world.truths("train"))
     assert metrics.frames_na == labeled
     assert metrics.na_reasons == {"video_unreadable": labeled}
@@ -202,8 +224,8 @@ def test_only_the_requested_role_flows_through(tmp_path: Path, make_video):
     validation = world.truths("validation")
     assert {t.video_id for t in train} == {"a01"}
     assert {t.video_id for t in validation} == {"b01"}
-    train_metrics = world.run("train", echo_truth)
-    validation_metrics = world.run("validation", echo_truth)
+    train_metrics = world.run("train", perfect_model)
+    validation_metrics = world.run("validation", perfect_model)
     assert train_metrics.frames_evaluated == 3
     assert validation_metrics.frames_evaluated == 2
     assert train_metrics.true_positives == 2
@@ -213,8 +235,8 @@ def test_only_the_requested_role_flows_through(tmp_path: Path, make_video):
 
 def test_pipeline_writes_no_image_file(tmp_path: Path, make_video):
     world = make_world(tmp_path, make_video)
-    world.run("train", echo_truth)
-    world.run("validation", echo_truth)
+    world.run("train", perfect_model)
+    world.run("validation", perfect_model)
     files = {p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file()}
     expected = {
         "videos/a01.mp4",
