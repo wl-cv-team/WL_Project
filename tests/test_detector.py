@@ -7,7 +7,12 @@ import pytest
 
 from wl_snatch.config import DetectorConfig
 from wl_snatch.contracts import FrameDetections
-from wl_snatch.detector import check_plate_names, detect_frames, detect_video
+from wl_snatch.detector import (
+    check_plate_names,
+    detect_frames,
+    detect_frames_labeled,
+    detect_video,
+)
 
 CONFIG = DetectorConfig(model_name="yolo26", conf=0.25)
 
@@ -226,3 +231,55 @@ def test_frame_generator_is_closed_when_model_raises(
         detect_frames(video, "v1", [0, 1], boom, CONFIG)
     assert closed == [True]  # closed while the exception is still held
     assert excinfo.value is not None
+
+
+class LabeledFake:
+    """Labeled fake model: returns boxes by call number (frames come in ascending order)."""
+
+    def __init__(self, per_call):
+        self.per_call = list(per_call)
+        self.calls = 0
+
+    def __call__(self, frame):
+        boxes = self.per_call[self.calls] if self.calls < len(self.per_call) else []
+        self.calls += 1
+        return boxes
+
+
+def test_detect_frames_labeled_keeps_model_labels(video: Path):
+    model = LabeledFake(
+        [
+            [(1.0, 2.0, 30.0, 40.0, 0.9, "person"), (2.0, 2.0, 5.0, 5.0, 0.5, "sports ball")],
+            [(1.0, 1.0, 4.0, 4.0, 0.2, "person")],
+        ]
+    )
+    first, second = detect_frames_labeled(video, "v1", [0, 1], model, CONFIG)
+    assert [b.label for b in first.boxes] == ["person", "sports ball"]
+    assert first.boxes[0].frame_index == 0
+    assert second.boxes == () and second.na_reason is None
+
+
+def test_detect_frames_labeled_applies_the_same_na_and_order_rules_as_detect_frames(
+    video: Path, tmp_path: Path
+):
+    labeled = LabeledFake([[(1.0, 1.0, 5.0, 5.0, 0.8, "person")]] * 5)
+    result = detect_frames_labeled(video, "v1", [9, 2, -1, 2, 0], labeled, CONFIG)
+    assert [(f.frame_index, f.na_reason) for f in result] == [
+        (-1, "frame_out_of_range"),
+        (0, None),
+        (2, None),
+        (9, "frame_out_of_range"),
+    ]
+    assert labeled.calls == 2
+    gone = detect_frames_labeled(tmp_path / "absent.mp4", "v1", [-1, 3], labeled, CONFIG)
+    assert [(f.frame_index, f.na_reason) for f in gone] == [
+        (-1, "video_unreadable"),
+        (3, "video_unreadable"),
+    ]
+    assert detect_frames_labeled(video, "v1", [], labeled, CONFIG) == []
+
+
+def test_detect_frames_still_labels_every_box_plate_after_the_refactor(video: Path):
+    model = FakeModel({0: [(1.0, 2.0, 30.0, 40.0, 0.9)]})
+    result = detect_frames(video, "v1", [0, 1], model, CONFIG)
+    assert [b.label for f in result for b in f.boxes] == ["plate"]

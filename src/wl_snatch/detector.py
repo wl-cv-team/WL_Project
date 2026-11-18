@@ -28,6 +28,9 @@ FRAME_OUT_OF_RANGE = "frame_out_of_range"
 
 ModelFn = Callable[[np.ndarray], Sequence[tuple[float, float, float, float, float]]]
 
+# Like ModelFn, but each box also carries the class name given by the model.
+LabeledModelFn = Callable[[np.ndarray], Sequence[tuple[float, float, float, float, float, str]]]
+
 _log = logging.getLogger(__name__)
 
 
@@ -42,12 +45,28 @@ def detect_frames(
     model: ModelFn,
     config: DetectorConfig,
 ) -> list[FrameDetections]:
-    """One entry per requested frame, ascending, duplicates removed.
+    """One entry per requested frame, ascending, duplicates removed; every box is "plate".
 
     Boxes with confidence below `config.conf` are dropped. The video is decoded
     once; frames reached before the end of the video are processed even when
-    other requested indices are out of range.
+    other requested indices are out of range. A thin layer over
+    `detect_frames_labeled` that fixes the label.
     """
+
+    def labeled(frame: np.ndarray):
+        return [(*box, LABEL) for box in model(frame)]
+
+    return detect_frames_labeled(video_path, video_id, frame_indices, labeled, config)
+
+
+def detect_frames_labeled(
+    video_path: Path,
+    video_id: str,
+    frame_indices: Sequence[int],
+    model: LabeledModelFn,
+    config: DetectorConfig,
+) -> list[FrameDetections]:
+    """Same rules as `detect_frames`, but `BoxDetection.label` is the name the model gives."""
     wanted = sorted(set(frame_indices))
     results: dict[int, FrameDetections] = {}
     if not wanted:
@@ -71,8 +90,8 @@ def detect_frames(
                 # read_frames raises this only after yielding every reachable frame.
                 break
             boxes = tuple(
-                BoxDetection(index, x1, y1, x2, y2, score, LABEL)
-                for x1, y1, x2, y2, score in model(frame)
+                BoxDetection(index, x1, y1, x2, y2, score, label)
+                for x1, y1, x2, y2, score, label in model(frame)
                 if score >= config.conf
             )
             results[index] = FrameDetections(video_id, index, boxes, None)
