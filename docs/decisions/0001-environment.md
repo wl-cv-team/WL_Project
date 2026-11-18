@@ -34,6 +34,6 @@
 - YOLO26 가중치를 받아 실제로 로드되는지는 이 Task에서 확인하지 않았다. 탐지 기준선 단계에서 확인한다.
 - Ultralytics 8.4.202와 torch 2.15.0의 호환을 명시한 공식 표는 찾지 못했다. 설치가 해결되고 import가 되는 것까지만 확인했다.
 - PyPI 페이지는 크기 때문에 일부만 읽혀 최신 릴리스의 업로드 날짜는 확인하지 못했다.
-- 더 새로운 모델 세대가 있는지 확인하지 못했다. Ultralytics 저장소 페이지(https://github.com/ultralytics/ultralytics)의 제목에는 2026-11-18 검색 결과 기준으로 YOLO27이 적혀 있고, 프로젝트 문서는 YOLO26을 최신으로 적고 있다. 별도 검색에서는 YOLO27이 출시 전 미리보기 단계라는 설명도 있었다. YOLO27의 공개 상태는 확인하지 못했다.
+- **YOLO27 (2026-11-18 확인):** Ultralytics 저장소 페이지(https://github.com/ultralytics/ultralytics)의 제목에 YOLO27이 적혀 있다. 공식 문서 페이지(https://docs.ultralytics.com/models/yolo27)는 가중치와 구현 코드가 공개되지 않았고 특징과 벤치마크가 출시 전에 바뀔 수 있다고 적었으며, 출시 시기는 "올해 안"으로만 안내하고 날짜를 정하지 않았다. 검색 결과의 자료는 14~59일 전 것이라 최신 상태는 문서나 저장소에서 다시 확인해야 한다. 공개 전이므로 합의한 비교 대상(YOLO26, YOLO11, YOLOv8)에는 영향이 없다.
 - 이 Task에서는 가중치를 내려받거나 불러오지 않았고, `load_ultralytics_model`과 `scripts/run_detector.py`는 실행하지 않았다.
 - Python 3.13 이상으로 올리는 것은 검토하지 않았다. 올릴 때 이 문서를 갱신한다.

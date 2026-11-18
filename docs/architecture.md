@@ -3,7 +3,7 @@
 탐지 베이스라인을 기준으로 한 코드의 층과 처리 순서를 적는다. 구현 순서와 Task 번호는 `docs/superpowers/plans/2026-11-05-foundation-and-detection.md`를 따른다. 표의 "상태"는 이 문서를 쓴 시점의 코드를 기준으로 한다.
 
 - **있음:** 코드와 테스트가 있다.
-- **A단계:** 이 문서와 같은 변경에서 구현했다(Task 6, 6a, 7, 7b, 7c).
+- **A단계:** 구현했다(Task 6, 6a, 7, 7b, 7c). **A2단계:** COCO 사전학습 그대로 실행 모드를 구현했다(Task 8a). 모델과 가중치는 아직 실행하거나 내려받지 않았다.
 - **예정(B단계):** 아직 구현하지 않았다. 이슈 #2의 학습 구성과 이미지 정책 답변 뒤에 한다(Task 6b, 8).
 
 ## 처리 순서
@@ -37,7 +37,8 @@
 | 평가 | `eval_detection.py` | IoU 매칭, 정밀도, 재현율, 프레임당 오탐, `N/A` 집계 | A단계(Task 6) |
 | 탐지기 | `config.py`, `detector.py` | 설정으로 모델과 장치를 고르고, 프레임에서 탐지한다. 단일 클래스 `plate` 가중치만 쓴다 | A단계(Task 7) |
 | 정답으로 평가하기 | `evaluation_run.py` | 정답을 영상별로 묶어 탐지하고 평가한다 | A단계(Task 7c) |
-| 데이터셋 내보내기 | `dataset.py` | 학습용 폴더와 `dataset.yaml`을 만든다 | 예정(Task 6b, 이미지 정책 결정 뒤) |
+| COCO 사전학습 그대로 실행 | `coco_baseline.py` | 원래 COCO 클래스 이름을 유지해 실행하고 클래스별 개수와 추론 시간을 기록한다. 원판 평가와 연결하지 않는다 | A2단계(Task 8a), 모델은 아직 실행하지 않음 |
+| 데이터셋 내보내기 | `dataset.py` | 학습용 폴더와 `dataset.yaml`을 `data/derived/` 아래에 만든다 | 예정(Task 6b, fine-tuning을 시작할 때) |
 | 학습 | `train.py` | 사전학습 가중치에서 시작해 `plate` 한 클래스로 학습하고 가중치 경로를 돌려준다 | 예정(Task 8) |
 | 비교 | `compare.py` | 한 번에 한 축만 바꾼 비교를 강제하고 CSV로 기록한다 | 예정(Task 8) |
 | 실행기 | `scripts/*.py` | 위 모듈을 호출만 한다. 로직을 두지 않는다 | 있음, 탐지 실행기는 A단계 |
@@ -49,7 +50,7 @@
 |---|---|---|
 | 얼굴이 담긴 이미지는 저장소에 올리지 않는다 | `.gitignore`(`data/` 아래 이미지 확장자와 `runs/` 제외), PR 템플릿, 이미지를 파일로 쓰지 않는 것을 확인하는 모듈별 테스트 | 있음 |
 | 평가와 탐지는 이미지 파일 없이 메모리에서 한다 | `frames.read_frames`, `detect_frames` | 있음 |
-| 학습용 이미지는 로컬 git 제외 폴더에만 둔다 | `dataset.assert_ignored_output` | 예정(Task 6b, 정책 결정 뒤) |
+| 학습용 이미지는 로컬 git 제외 폴더에만 둔다(2026-11-18 합의) | `dataset.assert_ignored_output` | 예정(Task 6b) |
 | 같은 사람이 학습과 검증 양쪽에 없다 | 분할 표를 만들 때 `split.assert_no_person_leak`. `ground_truth.load_ground_truth`는 분할 표의 `role`을 그대로 따르며 `person_id`를 다시 검사하지 않는다 | 있음 |
 | 측정하지 못한 값은 채우지 않고 `N/A`와 사유를 남긴다 | `contracts.py`, `detector.py`, `eval_detection.py`(사유 값은 `docs/contracts/detection.md`) | 있음. 비교 CSV는 예정(Task 8) |
 | 한 번에 한 축만 바꾸고 같은 프레임에서 비교한다 | `compare.assert_single_axis` | 예정(Task 8) |
@@ -69,8 +70,11 @@
 - **다음 단계(바 경로 등):** `FrameDetections` CSV를 입력으로 받는다. 형식을 바꾸면 `docs/contracts/detection.md`와 이 형식을 쓰는 단계의 코드와 테스트를 같이 바꾼다.
 - **다른 분할이나 라벨 묶음:** `person_split.csv`와 `plate_boxes/`가 입력이므로 파일만 바꾼다.
 
-## 아직 정해지지 않은 것
-- 학습용 이미지를 로컬에 만드는 방식(이슈 #2 질문 3)
-- 베이스라인 학습 구성(학습 6편과 검증 6편, 음성 샘플의 용도)
+## 정해진 것과 아직 정해지지 않은 것
+정해진 것(`docs/decisions/0003-baseline-setup.md`): 학습 45장(원판 있음 39·없음 6), 검증 39장, 빈 라벨은 학습용, 학습 이미지는 로컬 git 제외 폴더에 생성 허용, 첫 실행은 fine-tuning 없는 COCO 사전학습 그대로 실행.
+
+아직 정해지지 않은 것:
+- fine-tuning 설정(backbone 동결, epoch, 학습률, 배치, seed). COCO 실행 결과를 본 뒤 제안한다
+- 원판 없음 독립 검증용 별도 인원의 라벨
 - 두 번째 라벨링(pass 2)이 합쳐진 뒤 어느 pass를 정답으로 쓸지
 - TCN 적용 위치(이 구조의 바깥, `docs/decisions/0002`)

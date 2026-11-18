@@ -23,7 +23,7 @@
 - 기본 환경은 MacBook M2 Air 8GB다. (spec 5절)
 - `main` 직접 push 금지. `feature/<주제>` 브랜치와 PR 상호 리뷰. (spec 5절)
 - TCN 구현, 포즈 추정, 바 경로, 구간 분할은 이 계획에 넣지 않는다. (spec 9-1절)
-- 학습용 이미지 파일은 이슈 #2의 이미지 정책 결정 전에는 만들지 않는다. 평가와 탐지는 프레임을 메모리에서 읽어 처리한다.
+- 학습용 프레임 이미지는 git 제외 로컬 폴더(`data/derived/`)에만 만들 수 있다(이슈 #2, 2026-11-18 합의). 같은 프레임을 만드는 추출 코드는 저장소에서 공유하고, 생성한 이미지와 영상은 git, 노트북 출력, PR·이슈 첨부에 올리지 않는다. 평가와 탐지는 프레임을 메모리에서 읽어 처리한다.
 
 ## Review Focus
 
@@ -498,9 +498,9 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 
 **후속(Task 5f 머지 뒤):** Task 5f(`plate_boxes.compare_passes`)도 라벨 파일 이름을 해석하는데 규칙이 다르다(앞의 0, 유니코드 숫자, `.DS_Store` 같은 숨김 파일 처리). 엄격한 `parse_label_name`과 파일 순회를 `plate_boxes.py` 한 곳에 두고 `ground_truth`, `compare_passes`, 첫 번째 라벨 잠금이 함께 쓰게 통합한다. 어느 pass를 정답으로 쓸지도 그때 팀이 정한다.
 
-### Task 6b: 학습용 데이터셋 내보내기 (B단계 — 이슈 #2의 이미지 정책 결정 뒤에 실행)
+### Task 6b: 학습용 데이터셋 내보내기 (B단계 — fine-tuning을 시작할 때 실행)
 
-**상태:** 이슈 #2(2026-11-18)에서 "학습용 이미지 파일을 로컬 git 제외 폴더에 만들어도 되는가"를 동료에게 물었다. 답이 (a) 로컬 허용이면 아래대로 구현하고, (b) 메모리 처리면 이 Task를 다시 쓴다. 정해지기 전에는 구현하지 않는다.
+**상태:** 이미지 정책이 (a) 로컬 git 제외 폴더 저장 허용으로 정해졌다(이슈 #2, 2026-11-18, `docs/decisions/0003-baseline-setup.md`). 다만 첫 실행이 fine-tuning 없는 COCO 사전학습 그대로 실행(Task 8a)으로 정정되어, 이 Task는 fine-tuning을 시작할 때 구현한다. 학습 구성은 학습 45장(원판 있음 39·없음 6), 검증 39장이다.
 
 **배경:** YOLO 학습은 기본적으로 이미지 파일을 읽는다. `GroundTruthFrame` 목록(Task 6a)과 영상에서 프레임을 디코딩해 `out_dir`에 학습용 폴더를 만든다. `out_dir`은 git 제외 폴더여야 한다(`.gitignore`가 `data/` 아래 이미지 확장자를 이미 막는다). 얼굴이 나오는 이미지가 로컬 디스크에 생기며 저장소, 노트북 출력, PR 첨부에는 올리지 않는다.
 
@@ -599,10 +599,57 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 
 - `evaluate_ground_truth(truths: Sequence[GroundTruthFrame], video_paths: Mapping[str, Path], model: ModelFn, config: DetectorConfig, iou_threshold: float) -> DetectionMetrics`: `truths`를 `video_id`로 묶어(오름차순) 영상마다 `detect_frames`를 한 번 부르고 `evaluate_detections`로 평가한다. `video_paths`에 없는 `video_id`는 `ValueError`. 빈 `truths`는 모든 비율이 `None`이고 `frames_evaluated == 0`이다.
 
-### Task 8: 모델 비교와 결정 기록
+### Task 8a: COCO 사전학습 모델을 그대로 실행하는 탐색 (A2단계, 이슈 #2)
+
+**상태:** 도메인 담당이 2026-11-18 #2에서 요청을 정정했다. 원판 데이터로 fine-tuning하기 전에, COCO 사전학습 모델을 그대로 실행해 로드와 실행 가능 여부, 원래 클래스로 탐지되는 물체, 추론 시간을 확인한다(`docs/decisions/0003-baseline-setup.md`). 이 결과는 **원판 탐지 성능이 아니다.** 원판 라벨과의 IoU, 정밀도, 재현율은 계산하지 않고, 다른 클래스의 박스를 `plate`로 바꾸지 않는다.
 
 **Files:**
-- Create: `src/wl_snatch/compare.py`, `src/wl_snatch/train.py`, `scripts/train_detector.py`, `scripts/compare_detectors.py`, `docs/decisions/0003-detector-baseline.md`
+- Modify: `src/wl_snatch/detector.py`(클래스 이름을 함께 돌려주는 일반형 추가), `tests/test_detector.py`
+- Create: `src/wl_snatch/coco_baseline.py`, `scripts/run_coco_baseline.py`
+- Test: `tests/test_coco_baseline.py`
+
+**Interfaces:**
+- Consumes: `DetectorConfig`, `resolve_device`, `weight_name`, `FrameDetections`, `BoxDetection`, `ground_truth.load_ground_truth`(대상 프레임 번호만 쓰고 박스는 쓰지 않는다), `frames.read_frames`.
+- Produces:
+  - `detector.LabeledModelFn = Callable[[np.ndarray], Sequence[tuple[float, float, float, float, float, str]]]`: BGR 프레임 하나를 받아 `(x1, y1, x2, y2, confidence, label)`(픽셀) 목록을 돌려준다.
+  - `detector.detect_frames_labeled(video_path, video_id, frame_indices, model: LabeledModelFn, config) -> list[FrameDetections]`: `detect_frames`와 같은 규칙(오름차순, 중복 제거, 신뢰도 미만 제거, `video_unreadable`, `frame_out_of_range`)으로 `BoxDetection.label`에 모델이 준 이름을 쓴다. 기존 `detect_frames`는 이것을 불러 라벨을 `"plate"`로 고정하는 얇은 층으로 바꾼다(기존 동작과 테스트는 그대로).
+  - `coco_baseline.load_coco_model(config: DetectorConfig) -> LabeledModelFn`: Ultralytics를 함수 안에서만 가져와 `weight_name(config.model_name)`의 COCO 사전학습 가중치를 불러오고, 원래 클래스 이름을 유지해 돌려준다. `config.weights_path`가 있으면 `ValueError`(학습한 가중치는 `plate` 경로로). 불러온 모델의 `names`가 80개 COCO 클래스가 아니거나 `plate`를 포함하면 `ValueError`(이 모드는 COCO 사전학습 모델만 받는다). 장치는 `resolve_device`로 정하고 사유를 기록한다.
+  - `coco_baseline.resolve_config_device(config) -> tuple[str, str | None]`: torch를 함수 안에서 가져와 장치를 정한다. `load_coco_model`과 스크립트의 환경 기록이 이 함수 하나를 쓴다(모델이 쓴 장치와 기록한 장치가 같다).
+  - `coco_baseline.check_coco_names(names)`(순수 함수): 키가 0..79인 80개 항목이고 `plate`라는 이름이 없어야 한다. 아니면 처음 5개 이름이 담긴 `ValueError`.
+  - `coco_baseline.environment_record(config, device, reason, versions: Mapping[str, str] | None = None) -> dict[str, str]`: Python, `ultralytics`, `torch`, `opencv`의 버전(`importlib.metadata`, 테스트에서는 `versions`로 주입), 운영체제와 기계 정보(`platform`), 요청한 장치와 선택된 장치와 사유, 가중치 이름, `imgsz`, `conf`, NMS의 IoU 기본값(알 수 있을 때), `seed`를 돌려준다.
+  - `coco_baseline.timed(model: LabeledModelFn) -> tuple[LabeledModelFn, list[float]]`: 호출마다 걸린 시간(ms)을 두 번째 값에 쌓는 감싸개.
+  - `CocoRun(summaries: dict[str, CocoSummary], warmup_ms: float | None)`와 `run_coco_baseline(truths_by_role, video_paths, model, config) -> CocoRun`: 역할별로 라벨된 프레임에서 모델을 부른다. 시간 측정 전에 첫 프레임에서 모델을 **한 번 따로 호출(웜업)**하고, 그 시간은 `warmup_ms`로 한 번만 보고하며 어떤 역할의 시간 통계와 클래스 개수에도 넣지 않는다(읽을 수 있는 프레임이 없으면 `None`).
+  - `CocoSummary` frozen dataclass와 `summarize_coco_run(frames: Sequence[FrameDetections], times_ms: Sequence[float]) -> CocoSummary`: 클래스 이름별 탐지 개수, 박스가 하나도 없는 처리된 프레임 수, 처리한 프레임 수, `N/A` 프레임 수와 사유별 개수, 첫 호출 시간, 나머지의 중앙값, 평균, 최댓값(호출이 없으면 `None`).
+  - `coco_baseline.format_report(record: Mapping[str, str], summaries: Mapping[str, CocoSummary], warmup_ms: float | None = None) -> str`: 설정과 역할별 수치만 담은 텍스트(이미지, 좌표 없음). 원판 성능을 나타내는 문구를 만들지 않는다.
+- `scripts/run_coco_baseline.py`: 인자 `--model`(`yolo26`, `yolo11`, `yolov8`), `--out`(텍스트 보고서 경로, 기본 `artifacts/coco_baseline/<model>.txt`, git 제외 폴더). 라벨된 프레임을 역할별로 `load_ground_truth`로 얻어 영상별로 `detect_frames_labeled`를 부르고, 보고서를 쓴다. 평가기를 부르지 않는다. 이 Task에서는 실행하지 않는다(가중치를 받는 것은 별도 승인 뒤).
+
+- [ ] **Step 1: 실패하는 테스트 작성** (합성 영상과 가짜 `LabeledModelFn`만 사용. 가중치를 받거나 Ultralytics를 부르지 않는다).
+  - `test_detect_frames_labeled_keeps_model_labels`
+  - `test_detect_frames_labeled_applies_the_same_na_and_order_rules_as_detect_frames`
+  - `test_detect_frames_still_labels_every_box_plate_after_the_refactor` (`tests/test_detector.py`의 기존 테스트가 그대로 통과)
+  - `test_load_coco_model_refuses_a_weights_path_before_importing_ultralytics` (새 인터프리터에서 `ultralytics`가 `sys.modules`에 없음)
+  - `test_check_coco_names_accepts_80_classes_and_rejects_plate_or_other_sizes` (순수 함수로 분리해 가짜 `names`로 시험)
+  - `test_environment_record_contains_versions_device_and_conditions` (`versions` 주입)
+  - `test_timed_records_one_time_per_call_in_order`
+  - `test_summarize_counts_classes_zero_box_frames_and_na_reasons`
+  - `test_summarize_time_stats_separate_the_first_call_and_handle_no_calls`
+  - `test_report_contains_settings_and_counts_and_no_plate_performance_wording`
+  - `test_coco_module_import_does_not_import_ultralytics`
+  - `test_coco_baseline_writes_no_image_file`
+- [ ] **Step 2: 실패 확인.** Run: `uv run pytest tests/test_coco_baseline.py tests/test_detector.py -v` → 새 테스트 FAIL.
+- [ ] **Step 3: 구현.** `load_coco_model`은 가중치와 네트워크가 필요하므로 테스트하지 않는다.
+- [ ] **Step 4: 통과 확인.** `uv run pytest -q` 전체 통과, `uv run ruff check`.
+- [ ] **Step 5: 커밋.** 가중치를 받거나 모델을 실행하지 않는다.
+- [ ] **Step 6: 실제 실행(별도 승인 뒤).** 가중치를 내려받아 세 모델을 같은 조건(입력 640, `conf` 0.25, 같은 장치)에서 라벨된 84프레임(학습 45, 검증 39)에 실행하고 보고서를 이슈 #2에 수치와 텍스트로 올린다. 입력 색상 순서와 좌표를 확인한다: `result.orig_shape`가 프레임 크기와 같은지, 박스가 프레임 안에 있는지, 같은 프레임을 BGR과 RGB로 넣었을 때 결과 차이(참고용).
+
+**이 Task에서 제외:** 원판 라벨 기준 평가, fine-tuning, 이미지 파일 생성, 가중치 내려받기.
+
+### Task 8: 모델 비교와 결정 기록
+
+**상태:** Task 8a(COCO 사전학습 그대로 실행)의 결과를 함께 본 뒤 fine-tuning 여부와 첫 학습 설정(backbone 동결, epoch, 학습률, 배치, seed)을 정한다(`docs/decisions/0003-baseline-setup.md`). 그 전에는 학습을 시작하지 않는다. 학습 구성은 학습 45장(원판 있음 39·없음 6), 검증 39장이다. 빈 라벨 6장은 학습용이고, 원판 없음 독립 평가는 별도 인원의 라벨이 생길 때까지 미평가로 명시한다.
+
+**Files:**
+- Create: `src/wl_snatch/compare.py`, `src/wl_snatch/train.py`, `scripts/train_detector.py`, `scripts/compare_detectors.py`, `docs/decisions/0004-detector-baseline.md`
 - Test: `tests/test_compare.py`, `tests/test_train.py`
 
 **Interfaces:**
@@ -625,7 +672,7 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 - [ ] **Step 4: 통과 확인.** → 4 passed.
 - [ ] **Step 5: YOLO26 기준선 실행(B단계, 이슈 #2의 이미지 정책과 학습 구성 답변 뒤).** `scripts/train_detector.py`(`train_detector`)로 YOLO26을 Task 6b가 만든 학습용 폴더의 train으로 학습하고, 검증 영상의 라벨된 프레임에서 `load_ground_truth`(Task 6a)와 `evaluate_ground_truth`(Task 7c, `detect_frames`로 메모리 디코딩)로 평가한다. M2 8GB에서 메모리 때문에 실패하면 `imgsz`나 배치를 줄이고 그 사실을 기록한다.
 - [ ] **Step 6: YOLO11, YOLOv8 비교 실행.** 모델만 바꾸고 나머지는 같게 한다. `scripts/compare_detectors.py`가 `assert_single_axis`를 먼저 호출한다.
-- [ ] **Step 7: 결정 기록.** `docs/decisions/0003-detector-baseline.md`에 비교 표, 조건, seed, 실패 사례(오탐 중심), `N/A` 개수를 적는다. 비교 표에는 학습·검증 영상 수와 프레임 수(N), 프레임 선정 규칙(단계 경계 + 사이 프레임), 음성 프레임 수, 그룹을 함께 적는다. 해석은 측정값 범위에서만 쓴다.
+- [ ] **Step 7: 결정 기록.** `docs/decisions/0004-detector-baseline.md`에 비교 표, 조건, seed, 실패 사례(오탐 중심), `N/A` 개수를 적는다. 비교 표에는 학습·검증 영상 수와 프레임 수(N), 프레임 선정 규칙(단계 경계 + 사이 프레임), 음성 프레임 수, 그룹을 함께 적는다. 해석은 측정값 범위에서만 쓴다.
 - [ ] **Step 8: 커밋.**
 
 ### Task 9: 노트북 위생 검사와 입문 튜토리얼
