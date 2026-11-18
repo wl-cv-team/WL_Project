@@ -8,21 +8,25 @@ frames. Nothing in this module writes a file.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 
+class VideoUnreadableError(ValueError):
+    """The video file is missing or cannot be opened."""
+
+
 def _open(video_path: Path) -> cv2.VideoCapture:
     path = Path(video_path)
     if not path.is_file():
-        raise ValueError(f"video file not found: {path.name}")
+        raise VideoUnreadableError(f"video file not found: {path.name}")
     capture = cv2.VideoCapture(str(path))
     if not capture.isOpened():
         capture.release()
-        raise ValueError(f"video file cannot be opened: {path.name}")
+        raise VideoUnreadableError(f"video file cannot be opened: {path.name}")
     return capture
 
 
@@ -55,6 +59,43 @@ def read_frame(video_path: Path, frame_index: int) -> np.ndarray:
     finally:
         capture.release()
     raise ValueError(f"{name}: frame index {frame_index} is out of range (video has fewer frames)")
+
+
+def read_frames(video_path: Path, frame_indices: Sequence[int]) -> Iterator[tuple[int, np.ndarray]]:
+    """Decode the video once, in sequence, and yield the requested frames.
+
+    Yields (frame index, BGR array) in ascending index order, each index once,
+    whatever the order or repetition of `frame_indices`. Decoding stops after the
+    largest requested index. Frames that exist are yielded before the error is
+    raised: when an index is at or beyond the decoded length, ValueError naming
+    the video and the first such index is raised after the last decoded frame.
+    A negative index raises ValueError before any decoding. Nothing is written.
+    """
+    name = Path(video_path).name
+    wanted = sorted(set(frame_indices))
+    for index in wanted:
+        if index < 0:
+            raise ValueError(f"{name}: frame index {index} is negative")
+    if not wanted:
+        return
+    capture = _open(video_path)
+    try:
+        pending = iter(wanted)
+        target = next(pending)
+        last = wanted[-1]
+        decoded = 0
+        for position, (frame, _) in enumerate(_decode(capture)):
+            decoded = position + 1
+            if position == target:
+                yield position, frame
+                if position == last:
+                    return
+                target = next(pending)
+    finally:
+        capture.release()
+    raise ValueError(
+        f"{name}: frame index {target} is out of range (video has {decoded} frames)"
+    )
 
 
 def count_frames(video_path: Path) -> int:

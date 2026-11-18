@@ -10,6 +10,7 @@ from wl_snatch.frames import (
     frame_times_ms,
     raw_frame_times_ms,
     read_frame,
+    read_frames,
 )
 
 @pytest.fixture
@@ -94,3 +95,54 @@ def test_raw_frame_times_not_shifted_and_frame_times_are_shifted_copy(
     reported = iter([40.0, 80.0, 120.0, 160.0, 200.0])
     monkeypatch.setattr(cv2.VideoCapture, "get", lambda self, prop: next(reported))
     assert frame_times_ms(video) == [0.0, 40.0, 80.0, 120.0, 160.0]
+
+
+def _dominant(frame: np.ndarray) -> int:
+    return int(np.argmax(frame.reshape(-1, 3).mean(axis=0)))
+
+
+def test_read_frames_returns_requested_frames_in_ascending_order_once_each(
+    video: Path, dominant_channels, monkeypatch: pytest.MonkeyPatch
+):
+    opened = []
+    original = cv2.VideoCapture.__init__
+
+    def counting_init(self, *args, **kwargs):
+        opened.append(args)
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(cv2.VideoCapture, "__init__", counting_init)
+    result = list(read_frames(video, [3, 1, 3, 0]))
+    assert [index for index, _ in result] == [0, 1, 3]
+    for index, frame in result:
+        assert frame.shape == (48, 64, 3)
+        assert _dominant(frame) == dominant_channels[index]
+    assert len(opened) == 1
+
+
+def test_read_frames_out_of_range_raises_value_error_with_name_and_index(video: Path):
+    with pytest.raises(ValueError) as excinfo:
+        list(read_frames(video, [1, 7]))
+    assert "synthetic.mp4" in str(excinfo.value)
+    assert "7" in str(excinfo.value)
+    with pytest.raises(ValueError) as excinfo:
+        list(read_frames(video, [-2]))
+    assert "synthetic.mp4" in str(excinfo.value)
+    assert "-2" in str(excinfo.value)
+
+
+def test_read_frames_yields_reachable_frames_before_raising(video: Path):
+    seen = []
+    with pytest.raises(ValueError, match="7"):
+        for index, _ in read_frames(video, [0, 2, 7]):
+            seen.append(index)
+    assert seen == [0, 2]
+
+
+def test_read_frames_empty_request_yields_nothing(video: Path):
+    assert list(read_frames(video, [])) == []
+
+
+def test_read_frames_missing_video_raises_value_error(tmp_path: Path):
+    with pytest.raises(ValueError, match="absent.mp4"):
+        list(read_frames(tmp_path / "absent.mp4", [0]))
