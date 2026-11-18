@@ -106,8 +106,12 @@ def evaluate_detections(
     prediction has `na_reason` is N/A with that reason. Duplicate
     (video_id, frame_index) keys raise ValueError. All predicted boxes count,
     whatever their label.
+
+    Predictions of equal confidence are matched in input order. A frame whose
+    prediction has `na_reason` is N/A, so its truth boxes are not counted as
+    misses (false negatives).
     """
-    if not 0 < iou_threshold <= 1:
+    if isinstance(iou_threshold, bool) or not 0 < iou_threshold <= 1:
         raise ValueError(f"iou_threshold must satisfy 0 < iou_threshold <= 1, got {iou_threshold}")
     pred_by_key = _index_unique(predictions, "prediction")
     truth_by_key = _index_unique(truths, "ground truth")

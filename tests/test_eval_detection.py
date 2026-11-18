@@ -174,3 +174,33 @@ def test_iou_zero_area_and_inverted_boxes_give_zero():
     assert iou((5, 5, 5, 5), (5, 5, 5, 5)) == 0.0
     assert iou((10, 10, 0, 0), (0, 0, 10, 10)) == 0.0
     assert iou((0, 0, 10, 10), (0, 0, 0, 10)) == 0.0
+
+
+def test_matching_order_follows_descending_confidence():
+    t1 = (0.0, 0.0, 100.0, 100.0)
+    t2 = (40.0, 0.0, 140.0, 100.0)
+    # IoU(t1, t2) = 6000 / 14000 = 0.43, so P_high (= t1) overlaps only T1 at 0.5.
+    p_low = (10.0, 0.0, 110.0, 100.0)
+    # IoU(p_low, t1) = 9000 / 11000 = 0.818; IoU(p_low, t2) = 7000 / 13000 = 0.538.
+    # Descending: P_high takes T1, P_low takes T2 -> TP 2.
+    # Ascending: P_low takes T1 first, P_high then has only T2 (0.43) -> TP 1, FP 1, FN 1.
+    m = evaluate_detections(
+        [_pred(0, [(*p_low, 0.3), (*t1, 0.9)])], [_truth(0, [t1, t2])], 0.5
+    )
+    assert (m.true_positives, m.false_positives, m.false_negatives) == (2, 0, 0)
+    assert m.precision == 1.0
+    assert m.recall == 1.0
+
+
+def test_bool_iou_threshold_raises():
+    with pytest.raises(ValueError):
+        evaluate_detections([], [], True)
+
+
+def test_threshold_one_matches_identical_box_but_not_near_identical():
+    box = (0.0, 0.0, 100.0, 100.0)
+    near = (0.0, 0.0, 100.0, 99.9)  # IoU = 0.999
+    same = evaluate_detections([_pred(0, [(*box, 0.9)])], [_truth(0, [box])], 1.0)
+    assert (same.true_positives, same.false_positives, same.false_negatives) == (1, 0, 0)
+    off = evaluate_detections([_pred(0, [(*near, 0.9)])], [_truth(0, [box])], 1.0)
+    assert (off.true_positives, off.false_positives, off.false_negatives) == (0, 1, 1)
