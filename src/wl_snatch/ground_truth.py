@@ -22,14 +22,21 @@ from wl_snatch.plate_boxes import PlateBoxStore, read_frame_ranges
 
 ROLES = ("train", "validation")
 
-_LABEL_NAME = re.compile(r"(?P<video_id>.+)_f(?P<frame>\d+)\.txt")
+_LABEL_NAME = re.compile(r"(?P<video_id>.+)_f(?P<frame>0|[1-9][0-9]*)\.txt", re.ASCII)
 
 
 def parse_label_name(name: str) -> tuple[str, int]:
-    """`("a01_sn_f_01", 3)` from `a01_sn_f_01_f3.txt`. Only the last `_f<digits>` is the frame."""
+    """`("a01_sn_f_01", 3)` from `a01_sn_f_01_f3.txt`. Only the last `_f<digits>` is the frame.
+
+    The frame is written as the labeling tool writes it: ASCII digits, no leading
+    zeros (`_f3`, not `_f03`), because `PlateBoxStore.path_for` builds that name.
+    """
     match = _LABEL_NAME.fullmatch(name)
     if match is None:
-        raise ValueError(f"{name}: label file name is not <video_id>_f<frame>.txt")
+        raise ValueError(
+            f"{name}: label file name is not <video_id>_f<frame>.txt "
+            f"(frame in ASCII digits without leading zeros)"
+        )
     return match["video_id"], int(match["frame"])
 
 
@@ -52,6 +59,20 @@ def _unique_rows(table: pd.DataFrame, what: str) -> dict[str, pd.Series]:
     return rows
 
 
+def _table_int(row: pd.Series, video_id: str, column: str) -> int:
+    """Whole number from a video table cell; text such as "100" and floats such as 100.0 work."""
+    value = row[column]
+    try:
+        if isinstance(value, str):
+            return int(value.strip())
+        number = float(value)
+        if number.is_integer():
+            return int(number)
+    except (TypeError, ValueError):
+        pass
+    raise ValueError(f"{video_id}: {column} {value!r} is not a whole number")
+
+
 def load_ground_truth(
     boxes_dir: Path,
     videos: pd.DataFrame,
@@ -64,7 +85,10 @@ def load_ground_truth(
     Raises ValueError for a `role` outside `ROLES`, a role value in `split` outside
     `ROLES`, a label file name of the wrong form, a video that is in `split` but not in
     `videos`, a frame outside `[0, frame_count)`, and (when `ranges_path` is given) a
-    label file outside the frame range exception of its video. Label files of videos
+    label file outside the frame range exception of its video (checked for every video
+    in `split`, before the role filter), and a non-whole-number `frame_count`, `width` or
+    `height` (the message names the video and the column). A missing `boxes_dir` raises
+    FileNotFoundError; an empty one gives an empty list. Label files of videos
     that are not in `split` are skipped and counted.
     """
     if role not in ROLES:
@@ -82,7 +106,11 @@ def load_ground_truth(
     entries: list[tuple[str, int]] = []
     skipped = 0
     for path in boxes_dir.iterdir():
-        if path.name.startswith(".") or path.suffix != ".txt":
+        if path.name.startswith(".") or not path.is_file():
+            continue
+        if path.suffix.lower() == ".txt" and path.suffix != ".txt":
+            raise ValueError(f"{path.name}: label file suffix must be .txt in lower case")
+        if path.suffix != ".txt":
             continue
         video_id, frame = parse_label_name(path.name)
         if video_id not in split_rows:
@@ -90,7 +118,7 @@ def load_ground_truth(
             continue
         if video_id not in video_rows:
             raise ValueError(f"{video_id}: video is in the split but not in the video table")
-        frame_count = int(video_rows[video_id]["frame_count"])
+        frame_count = _table_int(video_rows[video_id], video_id, "frame_count")
         if not 0 <= frame < frame_count:
             raise ValueError(
                 f"{video_id}: frame {frame} is outside 0..{frame_count - 1} "
@@ -108,8 +136,8 @@ def load_ground_truth(
     entries.sort()
     frames: list[GroundTruthFrame] = []
     for video_id, frame in entries:
-        width = float(video_rows[video_id]["width"])
-        height = float(video_rows[video_id]["height"])
+        width = float(_table_int(video_rows[video_id], video_id, "width"))
+        height = float(_table_int(video_rows[video_id], video_id, "height"))
         norm = store.read(video_id, frame)
         if norm is None:
             boxes: tuple[tuple[float, float, float, float], ...] = ()

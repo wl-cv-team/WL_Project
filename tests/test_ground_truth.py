@@ -221,3 +221,99 @@ def test_range_is_not_checked_without_ranges_path(tmp_path, videos, split):
     write(tmp_path, "a01_sn_f_01", 21, "")
     frames, _ = load_ground_truth(tmp_path, videos, split, "train")
     assert len(frames) == 1
+
+
+@pytest.mark.parametrize("name", ["a_f03.txt", "a_f00.txt", "a_f٣.txt", "a_f007.txt"])
+def test_parse_label_name_rejects_frames_not_written_like_the_labeling_tool(name):
+    with pytest.raises(ValueError, match=name):
+        parse_label_name(name)
+
+
+def test_parse_label_name_accepts_frame_zero():
+    assert parse_label_name("a_f0.txt") == ("a", 0)
+
+
+def test_leading_zero_label_file_raises_instead_of_becoming_empty_frame(tmp_path, videos, split):
+    write(tmp_path, "a01_sn_f_01", "03", "0 0.5 0.5 0.2 0.2\n")
+    with pytest.raises(ValueError, match="a01_sn_f_01_f03.txt"):
+        load_ground_truth(tmp_path, videos, split, "train")
+
+
+def test_leading_zero_and_plain_file_for_same_frame_raise(tmp_path, videos, split):
+    write(tmp_path, "a01_sn_f_01", "03", "0 0.5 0.5 0.2 0.2\n")
+    write(tmp_path, "a01_sn_f_01", 3, "0 0.5 0.5 0.2 0.2\n")
+    with pytest.raises(ValueError, match="a01_sn_f_01_f03.txt"):
+        load_ground_truth(tmp_path, videos, split, "train")
+
+
+def test_uppercase_txt_suffix_raises_naming_the_file(tmp_path, videos, split):
+    (tmp_path / "a01_sn_f_01_f4.TXT").write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"a01_sn_f_01_f4\.TXT"):
+        load_ground_truth(tmp_path, videos, split, "train")
+
+
+def test_other_suffixes_are_ignored(tmp_path, videos, split):
+    (tmp_path / "a01_sn_f_01_f4.png").write_bytes(b"")
+    write(tmp_path, "a01_sn_f_01", 1, "")
+    frames, _ = load_ground_truth(tmp_path, videos, split, "train")
+    assert len(frames) == 1
+
+
+@pytest.mark.parametrize(
+    "column, value",
+    [("frame_count", "100.0"), ("width", "abc"), ("height", "x"), ("frame_count", None)],
+)
+def test_bad_video_table_value_raises_naming_video_and_column(tmp_path, split, column, value):
+    row = {"video_id": "a01_sn_f_01", "width": 720, "height": 1280, "frame_count": 100}
+    row[column] = value
+    write(tmp_path, "a01_sn_f_01", 1, "")
+    with pytest.raises(ValueError, match=rf"a01_sn_f_01.*{column}"):
+        load_ground_truth(tmp_path, pd.DataFrame([row]), split, "train")
+
+
+@pytest.mark.parametrize("frame_count, width", [("100", "720"), (100.0, 720.0), (100, 720)])
+def test_int_like_video_table_values_work(tmp_path, split, frame_count, width):
+    row = {"video_id": "a01_sn_f_01", "width": width, "height": 1280, "frame_count": frame_count}
+    write(tmp_path, "a01_sn_f_01", 1, "0 0.5 0.5 0.5 0.5\n")
+    frames, _ = load_ground_truth(tmp_path, pd.DataFrame([row]), split, "train")
+    assert frames[0].boxes == ((180.0, 320.0, 540.0, 960.0),)
+
+
+def test_directory_named_like_label_file_is_skipped(tmp_path, videos, split):
+    (tmp_path / "a01_sn_f_01_f4.txt").mkdir()
+    write(tmp_path, "a01_sn_f_01", 1, "")
+    frames, _ = load_ground_truth(tmp_path, videos, split, "train")
+    assert [f.frame_index for f in frames] == [1]
+
+
+def test_duplicate_video_in_split_raises(tmp_path, videos):
+    dup = make_split(("a01_sn_f_01", "train"), ("a01_sn_f_01", "validation"))
+    with pytest.raises(ValueError, match="a01_sn_f_01"):
+        load_ground_truth(tmp_path, videos, dup, "train")
+
+
+def test_duplicate_video_in_videos_raises(tmp_path, split):
+    dup = make_videos(("a01_sn_f_01", 720, 1280, 100), ("a01_sn_f_01", 720, 1280, 100))
+    with pytest.raises(ValueError, match="a01_sn_f_01"):
+        load_ground_truth(tmp_path, dup, split, "train")
+
+
+def test_missing_boxes_dir_raises_file_not_found(tmp_path, videos, split):
+    with pytest.raises(FileNotFoundError):
+        load_ground_truth(tmp_path / "nope", videos, split, "train")
+
+
+def test_empty_boxes_dir_gives_empty_result(tmp_path, videos, split):
+    frames, report = load_ground_truth(tmp_path, videos, split, "train")
+    assert frames == []
+    assert report == GroundTruthReport(0, 0, 0, 0, ())
+
+
+def test_range_exception_of_other_role_video_still_raises(tmp_path, videos, split):
+    boxes = tmp_path / "boxes"
+    boxes.mkdir()
+    ranges = tmp_path / "ranges.csv"
+    write_ranges(ranges, ("a02_sn_f_01", 10, 20, "pilot"))
+    write(boxes, "a02_sn_f_01", 30, "")
+    with pytest.raises(ValueError, match=r"a02_sn_f_01_f30\.txt"):
+        load_ground_truth(boxes, videos, split, "train", ranges)
