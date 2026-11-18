@@ -19,9 +19,10 @@ from wl_snatch.coco_baseline import (
     environment_record,
     format_report,
     load_coco_model,
+    resolve_config_device,
     run_coco_baseline,
 )
-from wl_snatch.config import WEIGHT_NAMES, DetectorConfig, resolve_device
+from wl_snatch.config import WEIGHT_NAMES, DetectorConfig
 from wl_snatch.ground_truth import ROLES, load_ground_truth
 
 NMS_IOU_NOTE = "0.7 (Ultralytics default, not read from the library)"
@@ -52,18 +53,12 @@ def main() -> None:
     paths = {v: args.videos_dir / f"{v}.mp4" for v in video_ids}
 
     model = load_coco_model(config)
-    summaries = run_coco_baseline(truths, paths, model, config)
+    run = run_coco_baseline(truths, paths, model, config)
 
-    import torch
-
-    device, reason = resolve_device(
-        config.device,
-        mps_available=torch.backends.mps.is_available(),
-        cuda_available=torch.cuda.is_available(),
-    )
+    device, reason = resolve_config_device(config)
     record = environment_record(config, device, reason, nms_iou=NMS_IOU_NOTE)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(format_report(record, summaries), encoding="utf-8")
+    out.write_text(format_report(record, run.summaries, run.warmup_ms), encoding="utf-8")
     print(out)
 
 

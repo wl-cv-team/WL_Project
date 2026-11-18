@@ -27,6 +27,7 @@ import numpy as np
 from wl_snatch.config import DetectorConfig, resolve_device, weight_name
 from wl_snatch.contracts import FrameDetections, GroundTruthFrame
 from wl_snatch.detector import LabeledModelFn, detect_frames_labeled
+from wl_snatch.frames import read_frames
 
 COCO_CLASS_COUNT = 80
 NOT_INSTALLED = "not installed"
@@ -54,6 +55,21 @@ def check_coco_names(names: Mapping[int, str]) -> None:
         )
 
 
+def resolve_config_device(config: DetectorConfig) -> tuple[str, str | None]:
+    """Device and fallback reason for `config.device`, using what torch reports as available.
+
+    The single source for the device, used by the model loader and by the run record.
+    Imports torch inside the function; not covered by tests.
+    """
+    import torch
+
+    return resolve_device(
+        config.device,
+        mps_available=torch.backends.mps.is_available(),
+        cuda_available=torch.cuda.is_available(),
+    )
+
+
 def load_coco_model(config: DetectorConfig) -> LabeledModelFn:
     """Load the COCO-pretrained weights named by `config.model_name`, keeping class names.
 
@@ -66,14 +82,9 @@ def load_coco_model(config: DetectorConfig) -> LabeledModelFn:
             "weights_path is not allowed in COCO mode; trained weights go through "
             "load_ultralytics_model (plate path)"
         )
-    import torch
     from ultralytics import YOLO
 
-    device, reason = resolve_device(
-        config.device,
-        mps_available=torch.backends.mps.is_available(),
-        cuda_available=torch.cuda.is_available(),
-    )
+    device, reason = resolve_config_device(config)
     weights = weight_name(config.model_name)
     _log.info("loading %s on device %s", weights, device)
     if reason is not None:
@@ -104,6 +115,23 @@ def _installed_version(package: str) -> str:
         return NOT_INSTALLED
 
 
+_OPENCV_DISTRIBUTIONS = (
+    "opencv-python",
+    "opencv-python-headless",
+    "opencv-contrib-python",
+    "opencv-contrib-python-headless",
+)
+
+
+def _opencv_version() -> str:
+    """Version of the first installed OpenCV distribution, else "not installed"."""
+    for package in _OPENCV_DISTRIBUTIONS:
+        version = _installed_version(package)
+        if version != NOT_INSTALLED:
+            return version
+    return NOT_INSTALLED
+
+
 def environment_record(
     config: DetectorConfig,
     device: str,
@@ -123,7 +151,7 @@ def environment_record(
         "python": given.get("python", platform.python_version()),
         "ultralytics": given.get("ultralytics", _installed_version("ultralytics")),
         "torch": given.get("torch", _installed_version("torch")),
-        "opencv": given.get("opencv", _installed_version("opencv-python")),
+        "opencv": given.get("opencv", _opencv_version()),
         "platform": platform.platform(),
         "machine": platform.machine(),
         "requested_device": config.device,
@@ -203,25 +231,33 @@ def group_frames_by_video(truths: Sequence[GroundTruthFrame]) -> dict[str, list[
     return {video_id: sorted(grouped[video_id]) for video_id in sorted(grouped)}
 
 
+@dataclass(frozen=True)
+class CocoRun:
+    summaries: dict[str, CocoSummary]
+    # Duration of the uncounted warm-up call; None when no frame could be read.
+    warmup_ms: float | None
+
+
 def run_coco_baseline(
     truths_by_role: Mapping[str, Sequence[GroundTruthFrame]],
     video_paths: Mapping[str, Path],
     model: LabeledModelFn,
     config: DetectorConfig,
-) -> dict[str, CocoSummary]:
+) -> CocoRun:
     """Run `model` on the labeled frames of each role and summarize per role.
 
-    Only the video ids and frame numbers of `truths_by_role` are used. Roles run in the
-    given order, videos in ascending id; the timing of a role covers its own calls
-    (the process's first call, which includes any warm-up, falls into the first role).
-    Raises ValueError naming a video id without an entry in `video_paths`, before any
-    detection runs.
+    Only the video ids and frame numbers of `truths_by_role` are used. A first,
+    uncounted warm-up call is made on the first requested frame (see `_warmup`); it is
+    in no role's timing or class counts. Roles run in the given order, videos in
+    ascending id; the timing of a role covers its own calls. Raises ValueError naming
+    a video id without an entry in `video_paths`, before any model call.
     """
     grouped = {role: group_frames_by_video(t) for role, t in truths_by_role.items()}
     for per_video in grouped.values():
         for video_id in per_video:
             if video_id not in video_paths:
                 raise ValueError(f"{video_id}: no video path given")
+    warmup_ms = _warmup(grouped, video_paths, model)
     wrapped, times = timed(model)
     summaries: dict[str, CocoSummary] = {}
     for role, per_video in grouped.items():
@@ -230,13 +266,40 @@ def run_coco_baseline(
         for video_id, indices in per_video.items():
             frames += detect_frames_labeled(video_paths[video_id], video_id, indices, wrapped, config)
         summaries[role] = summarize_coco_run(frames, times[before:])
-    return summaries
+    return CocoRun(summaries=summaries, warmup_ms=warmup_ms)
 
 
-def format_report(record: Mapping[str, str], summaries: Mapping[str, CocoSummary]) -> str:
+def _warmup(
+    grouped: Mapping[str, Mapping[str, list[int]]],
+    video_paths: Mapping[str, Path],
+    model: LabeledModelFn,
+) -> float | None:
+    """One uncounted model call on the first requested frame; its duration in ms.
+
+    The frame is the first frame of the first video of the first non-empty role.
+    The output is discarded. Returns None when no frame can be read.
+    """
+    for per_video in grouped.values():
+        for video_id, indices in per_video.items():
+            try:
+                _, frame = next(read_frames(video_paths[video_id], indices[:1]))
+            except (ValueError, StopIteration):
+                return None
+            start = time.perf_counter()
+            model(frame)
+            return (time.perf_counter() - start) * 1000.0
+    return None
+
+
+def format_report(
+    record: Mapping[str, str],
+    summaries: Mapping[str, CocoSummary],
+    warmup_ms: float | None = None,
+) -> str:
     """Plain-text report: run conditions, then per role counts and timing."""
     lines = ["COCO pretrained run (exploration)", ""]
     lines += [f"{key}: {value}" for key, value in record.items()]
+    lines.append(f"warm-up call ms (not included in the per-role timings): {_ms(warmup_ms)}")
     for role, s in summaries.items():
         lines += ["", f"[{role}]"]
         lines.append(f"frames processed: {s.processed_frames}")

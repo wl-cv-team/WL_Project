@@ -196,7 +196,7 @@ def test_report_contains_settings_and_counts_and_no_plate_performance_wording():
         ),
         "validation": summarize_coco_run([_frame(0, na="video_unreadable")], []),
     }
-    report = format_report(record, summaries)
+    report = format_report(record, summaries, None)
     assert "python: 3.12.7" in report
     assert "weights: yolo26n.pt" in report
     assert "train" in report and "validation" in report
@@ -251,14 +251,17 @@ def test_coco_baseline_writes_no_image_file(tmp_path: Path, make_video):
 
     # Fake labeled model, keyed by call order (videos ascending, frames ascending):
     # a01 frame 0, a01 frame 2, b01 frame 1. Frame 9 of a01 is beyond the 5 decoded frames.
+    # The very first call is the warm-up on a01 frame 0 (its output is discarded).
     script = iter(
         [
+            [(1.0, 1.0, 9.0, 9.0, 0.9, "warmup_only")],
             [(1.0, 1.0, 9.0, 9.0, 0.9, "person"), (2.0, 2.0, 4.0, 4.0, 0.6, "sports ball")],
             [],
             [(1.0, 1.0, 9.0, 9.0, 0.8, "person")],
         ]
     )
-    summaries = run_coco_baseline(truths, paths, lambda frame: next(script), CONFIG)
+    run = run_coco_baseline(truths, paths, lambda frame: next(script), CONFIG)
+    summaries = run.summaries
 
     train, validation = summaries["train"], summaries["validation"]
     assert train.class_counts == {"person": 1, "sports ball": 1}
@@ -268,10 +271,157 @@ def test_coco_baseline_writes_no_image_file(tmp_path: Path, make_video):
     assert validation.processed_frames == 1
     assert train.first_call_ms is not None
     assert validation.first_call_ms is not None
-    report = format_report({"weights": "yolo26n.pt"}, summaries)
+    assert run.warmup_ms is not None
+    report = format_report({"weights": "yolo26n.pt"}, summaries, run.warmup_ms)
     assert "plate" not in report.lower().replace("not plate-detection performance", "")
     files = {p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file()}
     assert all(name.endswith((".mp4", ".txt")) for name in files)
+
+
+class ScriptedModel:
+    """Fake labeled model: returns the n-th scripted output on the n-th call; counts calls."""
+
+    def __init__(self, outputs):
+        self.outputs = list(outputs)
+        self.calls = 0
+
+    def __call__(self, frame):
+        output = self.outputs[self.calls] if self.calls < len(self.outputs) else []
+        self.calls += 1
+        return output
+
+
+def _world(tmp_path: Path, make_video, roles: dict):
+    """Synthetic 5-frame videos; `roles` maps role -> {video_id: [frame numbers]}."""
+    paths = {}
+    truths = {}
+    for role, per_video in roles.items():
+        truths[role] = []
+        for video_id, frames in per_video.items():
+            paths[video_id] = make_video(tmp_path / f"{video_id}.mp4", size=(64, 48))
+            truths[role] += [GroundTruthFrame(video_id, f, ()) for f in frames]
+    return truths, paths
+
+
+def test_warmup_is_one_call_before_all_counted_calls_and_not_in_role_stats(
+    tmp_path: Path, make_video
+):
+    truths, paths = _world(
+        tmp_path, make_video, {"train": {"a01": [0, 2]}, "validation": {"b01": [1]}}
+    )
+    warm = (1.0, 1.0, 9.0, 9.0, 0.9, "warmup_only")
+    model = ScriptedModel(
+        [
+            [warm],
+            [(1.0, 1.0, 9.0, 9.0, 0.9, "person")],
+            [],
+            [(1.0, 1.0, 9.0, 9.0, 0.8, "sports ball")],
+        ]
+    )
+    run = run_coco_baseline(truths, paths, model, CONFIG)
+    assert model.calls == 1 + 3  # one warm-up plus one call per labeled frame
+    train, validation = run.summaries["train"], run.summaries["validation"]
+    assert train.processed_frames == 2 and validation.processed_frames == 1
+    assert train.class_counts == {"person": 1}
+    assert validation.class_counts == {"sports ball": 1}
+    assert "warmup_only" not in train.class_counts and "warmup_only" not in validation.class_counts
+    assert run.warmup_ms is not None
+    report = format_report({}, run.summaries, run.warmup_ms)
+    assert "warm-up call ms (not included in the per-role timings):" in report
+    assert "warmup_only" not in report
+
+
+def test_no_readable_frame_skips_the_warmup_and_still_runs(tmp_path: Path):
+    truths = {"train": [GroundTruthFrame("a01", 0, ()), GroundTruthFrame("a01", 3, ())]}
+    model = ScriptedModel([[(1.0, 1.0, 2.0, 2.0, 0.9, "person")]])
+    run = run_coco_baseline(truths, {"a01": tmp_path / "absent.mp4"}, model, CONFIG)
+    assert run.warmup_ms is None
+    assert model.calls == 0
+    assert run.summaries["train"].na_reasons == {"video_unreadable": 2}
+    assert run.summaries["train"].first_call_ms is None
+    report = format_report({}, run.summaries, run.warmup_ms)
+    assert "warm-up call ms (not included in the per-role timings): n/a" in report
+
+
+def test_warmup_uses_first_frame_of_first_video_of_first_nonempty_role(
+    tmp_path: Path, make_video
+):
+    truths, paths = _world(
+        tmp_path, make_video, {"train": {}, "validation": {"b01": [3, 1], "c01": [0]}}
+    )
+    seen = []
+
+    def model(frame):
+        seen.append(frame.shape)
+        return []
+
+    run = run_coco_baseline(truths, paths, model, CONFIG)
+    assert len(seen) == 1 + 3
+    assert run.summaries["train"].processed_frames == 0
+    assert run.summaries["validation"].processed_frames == 3
+
+
+def test_run_coco_baseline_role_timings_are_exact_per_role_slices(
+    tmp_path: Path, make_video, monkeypatch: pytest.MonkeyPatch
+):
+    import types
+
+    truths, paths = _world(
+        tmp_path, make_video, {"train": {"a01": [0, 2, 4]}, "validation": {"b01": [1]}, "test": {}}
+    )
+    # perf_counter is read twice per call: warm-up, then train x3, then validation x1.
+    readings = iter(
+        [0.0, 0.100]  # warm-up 100 ms (not in any role)
+        + [1.0, 1.040, 2.0, 2.010, 3.0, 3.030]  # train: 40, 10, 30
+        + [4.0, 4.005]  # validation: 5
+    )
+    monkeypatch.setattr(coco_baseline, "time", types.SimpleNamespace(perf_counter=lambda: next(readings)))
+    run = run_coco_baseline(truths, paths, lambda frame: [], CONFIG)
+    assert run.warmup_ms == pytest.approx(100.0)
+    train = run.summaries["train"]
+    assert train.first_call_ms == pytest.approx(40.0)
+    assert train.median_rest_ms == pytest.approx(20.0)
+    assert train.mean_rest_ms == pytest.approx(20.0)
+    assert train.max_rest_ms == pytest.approx(30.0)
+    validation = run.summaries["validation"]
+    assert validation.first_call_ms == pytest.approx(5.0)
+    assert validation.median_rest_ms is None and validation.max_rest_ms is None
+    empty = run.summaries["test"]
+    assert empty.first_call_ms is None and empty.mean_rest_ms is None
+    assert empty.processed_frames == 0
+
+
+def test_opencv_version_uses_first_installed_distribution(monkeypatch: pytest.MonkeyPatch):
+    installed = {"opencv-python-headless": "4.9.0", "opencv-contrib-python": "4.8.0"}
+    looked_up = []
+
+    def fake(package):
+        looked_up.append(package)
+        return installed.get(package, "not installed")
+
+    monkeypatch.setattr(coco_baseline, "_installed_version", fake)
+    record = environment_record(CONFIG, "cpu", None, versions={"python": "3.12"})
+    assert record["opencv"] == "4.9.0"
+    assert looked_up.index("opencv-python") < looked_up.index("opencv-python-headless")
+    assert "opencv-contrib-python" not in looked_up[looked_up.index("opencv-python-headless") + 1 :]
+
+
+def test_opencv_version_not_installed_and_injected_version_wins(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(coco_baseline, "_installed_version", lambda package: "not installed")
+    assert environment_record(CONFIG, "cpu", None)["opencv"] == "not installed"
+    record = environment_record(CONFIG, "cpu", None, versions={"opencv": "1.2.3"})
+    assert record["opencv"] == "1.2.3"
+
+
+def test_module_and_script_do_not_import_torch_at_import_time():
+    code = (
+        "import sys\n"
+        "import wl_snatch.coco_baseline\n"
+        "sys.exit(1 if 'torch' in sys.modules else 0)\n"
+    )
+    assert _fresh_interpreter(code).returncode == 0
+    script = Path(__file__).resolve().parents[1] / "scripts" / "run_coco_baseline.py"
+    assert "import torch" not in script.read_text(encoding="utf-8")
 
 
 def test_module_exposes_no_evaluator_dependency():
