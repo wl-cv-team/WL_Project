@@ -92,7 +92,7 @@ def test_export_places_frames_by_role_and_writes_yaml(exported):
 def test_yaml_uses_relative_paths_and_single_class_plate(exported):
     _, _, out, yaml_path = exported
     lines = yaml_path.read_text(encoding="utf-8").splitlines()
-    assert "path: ." in lines
+    assert not any(line.startswith("path:") for line in lines)  # Ultralytics then uses the yaml folder
     assert "train: images/train" in lines
     assert "val: images/validation" in lines
     assert lines[lines.index("names:") + 1] == "  0: plate"
@@ -219,7 +219,7 @@ def test_manifest_records_counts_and_sha256_of_every_file(exported):
     assert sorted(manifest["files"]) == expected_files
     for name in expected_files:
         assert manifest["files"][name] == sha(out / name)
-    joined = "".join(sha(out / name) for name in expected_files)
+    joined = "".join(f"{name}:{sha(out / name)}\n" for name in expected_files)
     assert manifest["overall_sha256"] == hashlib.sha256(joined.encode("ascii")).hexdigest()
 
 
@@ -262,7 +262,7 @@ def rewrite_manifest_hash(out: Path, name: str) -> None:
     manifest_path = out / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["files"][name] = sha(out / name)
-    joined = "".join(manifest["files"][n] for n in sorted(manifest["files"]))
+    joined = "".join(f"{n}:{manifest['files'][n]}\n" for n in sorted(manifest["files"]))
     manifest["overall_sha256"] = hashlib.sha256(joined.encode("ascii")).hexdigest()
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -336,3 +336,87 @@ def test_dataset_module_import_does_not_import_ultralytics():
     )
     completed = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize(
+    "box",
+    [
+        (float("nan"), 6.0, 24.0, 42.0),
+        (8.0, 6.0, float("inf"), 42.0),
+        (10.0, 10.0, 10.0, 30.0),  # zero width
+        (10.0, 20.0, 30.0, 20.0),  # zero height
+        (24.0, 6.0, 8.0, 42.0),  # x1 > x2: negative width
+        (8.0, 6.0, 70.0, 42.0),  # x2 = 70 is beyond the 64 px width
+        (8.0, -3.0, 24.0, 42.0),  # y1 = -3 is above the frame
+        (8.0, 6.0, 24.0, 50.0),  # y2 = 50 is below the 48 px height
+    ],
+)
+def test_export_rejects_bad_pixel_box_naming_video_and_frame(tmp_path: Path, make_video, box):
+    root = make_videos(tmp_path, make_video)
+    frames = {"train": [GroundTruthFrame("a01_sn_f_01", 3, (box,))]}
+    out = tmp_path / "out"
+    with pytest.raises(ValueError, match="a01_sn_f_01_f3"):
+        export_yolo_dataset(frames, videos_table(), root, out, REPO)
+    assert not out.exists() or not any(out.iterdir())
+
+
+def test_verify_rejects_manifest_counts_that_differ_from_the_files(exported):
+    _, _, out, yaml_path = exported
+    manifest_path = out / "manifest.json"
+    original = manifest_path.read_text(encoding="utf-8")
+    for key, wrong in (("images", 3), ("with_plate", 0), ("without_plate", 2)):
+        manifest = json.loads(original)
+        manifest["roles"]["train"][key] = wrong
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with pytest.raises(ValueError, match="train"):
+            verify_exported_dataset(yaml_path)
+    manifest_path.write_text(original, encoding="utf-8")
+    verify_exported_dataset(yaml_path)
+
+
+def test_verify_rejects_stray_folders_and_files_under_images_and_labels(exported):
+    _, _, out, yaml_path = exported
+    (out / "images" / "test").mkdir()
+    (out / "images" / "test" / "a.jpg").write_bytes(b"x")
+    with pytest.raises(ValueError, match="test"):
+        verify_exported_dataset(yaml_path)
+    (out / "images" / "test" / "a.jpg").unlink()
+    (out / "images" / "test").rmdir()
+    (out / "labels" / "extra").mkdir()
+    with pytest.raises(ValueError, match="extra"):
+        verify_exported_dataset(yaml_path)
+    (out / "labels" / "extra").rmdir()
+    (out / "images" / "loose.jpg").write_bytes(b"x")
+    with pytest.raises(ValueError, match="loose.jpg"):
+        verify_exported_dataset(yaml_path)
+
+
+def test_assert_ignored_output_names_the_first_open_probe_path():
+    # In data/metadata/ the .gitignore rules ignore images (any .jpg under data/) but track
+    # text files, so the image probe passes and the label probe is the first open one.
+    with pytest.raises(ValueError, match="not ignored") as excinfo:
+        assert_ignored_output(REPO / "data" / "metadata" / "x", REPO)
+    assert "data/metadata/x/labels/x.txt" in str(excinfo.value)
+
+
+def test_assert_ignored_output_checks_all_four_export_paths(monkeypatch: pytest.MonkeyPatch):
+    import wl_snatch.dataset as module
+
+    probed = []
+
+    def fake_run(command, **kwargs):
+        probed.append(command[-1])
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    assert_ignored_output(REPO / "data" / "derived" / "d", REPO)
+    assert probed == [
+        "data/derived/d/images/x.jpg",
+        "data/derived/d/labels/x.txt",
+        "data/derived/d/dataset.yaml",
+        "data/derived/d/manifest.json",
+    ]
+
+
+def test_assert_ignored_output_allows_runs_folder_for_training_output():
+    assert_ignored_output(REPO / "runs" / "plate", REPO)

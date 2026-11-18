@@ -11,6 +11,10 @@ Layout under `out_dir`:
     dataset.yaml                                 relative paths, one class `plate`
     manifest.json                                counts and SHA256 of every image and label file
 
+`dataset.yaml` has no `path` key, so Ultralytics uses the folder of the yaml file as the
+dataset root. JPEG bytes can differ across OpenCV builds, so the hashes compare runs on
+the same environment.
+
 The role `train` goes to folder `train` and yaml key `train`; the role `validation`
 goes to folder `validation` and yaml key `val` (`ROLE_FOLDERS`, `ROLE_YAML_KEYS`).
 Ultralytics and torch are never imported here.
@@ -20,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import shutil
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -35,6 +40,7 @@ from wl_snatch.frames import read_frames
 ROLES = ("train", "validation")
 ROLE_FOLDERS = {"train": "train", "validation": "validation"}
 ROLE_YAML_KEYS = {"train": "train", "validation": "val"}
+_PROBES = ("images/x.jpg", "labels/x.txt", "dataset.yaml", "manifest.json")
 _EPS = 1e-6  # label values are written with 6 decimals
 _PIXEL_TOLERANCE = 0.5  # boxes may exceed the image by at most this many pixels (rounding)
 
@@ -42,6 +48,8 @@ _PIXEL_TOLERANCE = 0.5  # boxes may exceed the image by at most this many pixels
 def assert_ignored_output(out_dir: Path, repo_root: Path) -> None:
     """ValueError when `out_dir` is inside the repository and not ignored by git.
 
+    Four probe paths under `out_dir` (an image, a label, `dataset.yaml`,
+    `manifest.json`) must all be ignored; the error names the first one that is not.
     A path outside the repository is allowed.
     """
     resolved = Path(out_dir).resolve()
@@ -50,19 +58,18 @@ def assert_ignored_output(out_dir: Path, repo_root: Path) -> None:
         relative = resolved.relative_to(root)
     except ValueError:
         return
-    result = subprocess.run(
-        ["git", "check-ignore", "-q", "--", relative.as_posix() + "/images/x.jpg"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 1:
-        raise ValueError(
-            f"output folder {out_dir} is inside the repository and not ignored by git; "
-            f"training images show faces and must not be tracked"
+    for probe in _PROBES:
+        path = (relative / probe).as_posix()
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", "--", path], cwd=root, capture_output=True, text=True
         )
-    if result.returncode != 0:
-        raise RuntimeError(f"git check-ignore failed: {result.stderr.strip()}")
+        if result.returncode == 1:
+            raise ValueError(
+                f"output path {path} is inside the repository and not ignored by git; "
+                f"training images show faces and must not be tracked"
+            )
+        if result.returncode != 0:
+            raise RuntimeError(f"git check-ignore failed: {result.stderr.strip()}")
 
 
 @dataclass(frozen=True)
@@ -78,21 +85,23 @@ def _sha256(data: bytes) -> str:
 
 
 def _overall(files: Mapping[str, str]) -> str:
-    """Hash of the per-file hashes (hex text) joined in file name order."""
-    return _sha256("".join(files[name] for name in sorted(files)).encode("ascii"))
+    """SHA256 over the lines `<relative path>:<file sha256>` sorted by path (names included)."""
+    return _sha256("".join(f"{name}:{files[name]}\n" for name in sorted(files)).encode("utf-8"))
 
 
 def _label_text(boxes: Sequence[tuple[float, float, float, float]], width: int, height: int,
                 name: str) -> str:
     lines = []
     for x1, y1, x2, y2 in boxes:
+        if not all(math.isfinite(v) for v in (x1, y1, x2, y2)):
+            raise ValueError(f"{name}: box {(x1, y1, x2, y2)} has a NaN or infinite value")
+        if x2 <= x1 or y2 <= y1:
+            raise ValueError(f"{name}: box {(x1, y1, x2, y2)} has zero or negative area")
         if (
             x1 < -_PIXEL_TOLERANCE
             or y1 < -_PIXEL_TOLERANCE
             or x2 > width + _PIXEL_TOLERANCE
             or y2 > height + _PIXEL_TOLERANCE
-            or x1 > x2
-            or y1 > y2
         ):
             raise ValueError(f"{name}: box {(x1, y1, x2, y2)} is outside the {width}x{height} frame")
         x1, x2 = max(0.0, x1), min(float(width), x2)
@@ -105,7 +114,8 @@ def _label_text(boxes: Sequence[tuple[float, float, float, float]], width: int, 
 
 def _yaml_text() -> str:
     return (
-        "path: .\n"
+        # No `path` key: Ultralytics then uses the folder of this yaml file. A relative
+        # `path` would be resolved against the working directory of the training run.
         f"train: images/{ROLE_FOLDERS['train']}\n"
         f"val: images/{ROLE_FOLDERS['validation']}\n"
         "names:\n"
@@ -168,15 +178,18 @@ def export_yolo_dataset(
     rows = _check_inputs(frames_by_role, videos)
 
     created_root = None if out_dir.exists() else _topmost_missing(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
     try:
+        out_dir.mkdir(parents=True, exist_ok=True)
         return _write_dataset(frames_by_role, rows, Path(videos_root), out_dir, jpeg_quality)
     except BaseException:
         if created_root is not None:
             shutil.rmtree(created_root, ignore_errors=True)
-        else:
+        elif out_dir.is_dir():
             for child in out_dir.iterdir():
-                shutil.rmtree(child) if child.is_dir() else child.unlink()
+                if child.is_dir():
+                    shutil.rmtree(child, ignore_errors=True)
+                else:
+                    child.unlink(missing_ok=True)
         raise
 
 
@@ -296,7 +309,9 @@ def _parse_yaml(path: Path) -> dict[str, str]:
             values[key.strip()] = value.strip()
     if "names:" not in lines or lines[lines.index("names:") + 1].strip() != "0: plate":
         raise ValueError(f"{path}: names must be exactly one class, 0: plate")
-    for key in ("path", "train", "val"):
+    if "path" in values:
+        raise ValueError(f"{path}: a `path` key is not allowed (the yaml folder is the root)")
+    for key in ("train", "val"):
         if key not in values:
             raise ValueError(f"{path}: missing key {key}")
     return values
@@ -330,11 +345,21 @@ def verify_exported_dataset(dataset_yaml: Path) -> DatasetReport:
     """
     dataset_yaml = Path(dataset_yaml)
     values = _parse_yaml(dataset_yaml)
-    root = (dataset_yaml.parent / values["path"]).resolve()
+    root = dataset_yaml.parent.resolve()
     manifest_path = root / "manifest.json"
     if not manifest_path.is_file():
         raise ValueError(f"{manifest_path}: manifest.json not found")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    allowed_folders = set(ROLE_FOLDERS.values())
+    for kind in ("images", "labels"):
+        base = root / kind
+        if not base.is_dir():
+            raise ValueError(f"{kind}: folder {base} is missing")
+        for child in sorted(base.iterdir()):
+            if not child.is_dir():
+                raise ValueError(f"{child.name}: unexpected file in {base}")
+            if child.name not in allowed_folders:
+                raise ValueError(f"{kind}/{child.name}: unexpected folder")
 
     images_by_role: dict[str, dict[str, Path]] = {}
     plates: dict[str, int] = {}
@@ -345,8 +370,12 @@ def verify_exported_dataset(dataset_yaml: Path) -> DatasetReport:
         label_dir = root / "labels" / ROLE_FOLDERS[role]
         if not image_dir.is_dir() or not label_dir.is_dir():
             raise ValueError(f"{role}: folder {image_dir} or {label_dir} is missing")
-        images = {p.stem: p for p in sorted(image_dir.iterdir()) if p.is_file()}
-        labels = {p.stem: p for p in sorted(label_dir.iterdir()) if p.is_file()}
+        for folder in (image_dir, label_dir):
+            for child in folder.iterdir():
+                if child.is_dir():
+                    raise ValueError(f"{child.name}: unexpected folder in {folder}")
+        images = {p.stem: p for p in sorted(image_dir.iterdir())}
+        labels = {p.stem: p for p in sorted(label_dir.iterdir())}
         for path in list(images.values()):
             if path.suffix != ".jpg":
                 raise ValueError(f"{path.name}: unexpected file in {image_dir}")
@@ -368,6 +397,20 @@ def verify_exported_dataset(dataset_yaml: Path) -> DatasetReport:
     shared = set(images_by_role["train"]) & set(images_by_role["validation"])
     if shared:
         raise ValueError(f"{sorted(shared)[0]}: file name is in both train and val")
+
+    for role in ROLES:
+        recorded_role = manifest["roles"][role]
+        found = {
+            "images": len(images_by_role[role]),
+            "with_plate": plates[role],
+            "without_plate": empties[role],
+        }
+        for key, count in found.items():
+            if recorded_role[key] != count:
+                raise ValueError(
+                    f"manifest.json: {role} {key} is {recorded_role[key]} "
+                    f"but the files give {count}"
+                )
 
     recorded = manifest["files"]
     for name in sorted(set(actual) - set(recorded)):

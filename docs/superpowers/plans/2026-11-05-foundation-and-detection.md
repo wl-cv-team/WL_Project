@@ -514,8 +514,8 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
   - `assert_ignored_output(out_dir: Path, repo_root: Path) -> None`: `out_dir`이 저장소 안이고 `git check-ignore`로 제외되지 않으면 `ValueError`(저장소 밖 경로는 허용).
   - `export_yolo_dataset(frames_by_role: Mapping[str, Sequence[GroundTruthFrame]], videos: pd.DataFrame, videos_root: Path, out_dir: Path, repo_root: Path, jpeg_quality: int = 95) -> Path`:
     - `out_dir`이 비어 있지 않으면 `ValueError`. 역할 키는 `train`, `validation`뿐이며 그 밖의 키는 `ValueError`.
-    - 역할별로 `images/<role>/<video_id>_f<프레임>.jpg`와 `labels/<role>/<video_id>_f<프레임>.txt`(정규화 `0 cx cy w h`, 소수 6자리, 박스 없으면 빈 파일)를 쓰고, 상대경로 `dataset.yaml`(`path`, `train`, `val`, `names: {0: plate}`)과 `manifest.json`을 쓴 뒤 `dataset.yaml` 경로를 돌려준다.
-    - `manifest.json`: 역할별 이미지 수, 원판 있음·없음 프레임 수, 영상 id 목록, `jpeg_quality`, 이미지와 라벨 파일별 SHA256, 전체 SHA256(파일 이름순으로 이어 붙인 값의 해시).
+    - 역할별로 `images/<role>/<video_id>_f<프레임>.jpg`와 `labels/<role>/<video_id>_f<프레임>.txt`(정규화 `0 cx cy w h`, 소수 6자리, 박스 없으면 빈 파일)를 쓰고, 상대경로 `dataset.yaml`(`train`, `val`, `names: {0: plate}`; `path` 키는 두지 않는다. Ultralytics가 상대 `path`를 학습 실행 위치 기준으로 풀기 때문에 키를 빼면 yaml이 있는 폴더가 기준이 된다)과 `manifest.json`을 쓴 뒤 `dataset.yaml` 경로를 돌려준다.
+    - `manifest.json`: 역할별 이미지 수, 원판 있음·없음 프레임 수, 영상 id 목록, `jpeg_quality`, 이미지와 라벨 파일별 SHA256, 전체 SHA256(`<상대경로>:<파일 SHA256>` 줄을 경로순으로 이어 붙인 값의 해시. JPEG 바이트는 OpenCV 빌드에 따라 달라질 수 있어 같은 환경의 실행끼리만 비교한다).
     - 같은 `(video_id, frame)`이 두 역할에 있거나, `videos` 표의 같은 `person_id`가 두 역할에 모두 나오면 `ValueError`(사람 이름을 담는다). 프레임을 읽지 못하면 `ValueError`(영상 id와 프레임 번호를 담는다). 어떤 이유로든 실패하면 이 함수가 `out_dir` 아래에 만든 것을 지우고 오류를 다시 낸다.
     - 한 이미지의 크기는 `videos` 표의 `width`, `height`와 달라도 디코딩한 프레임의 실제 크기로 박스를 정규화한다(표와 다르면 `ValueError`).
   - `verify_exported_dataset(dataset_yaml: Path) -> DatasetReport`: 읽기 전용 점검. 모든 이미지에 같은 이름의 라벨이 있고 그 반대도 같다, 라벨 줄은 `0 cx cy w h`이고 값이 0 이상 1 이하이며 박스가 이미지 안에 있다, 파일의 SHA256이 `manifest.json`과 같다, `train`과 `val` 사이에 같은 파일 이름이 없다. 어긋나면 `ValueError`(어느 파일인지 담는다). `DatasetReport`는 frozen dataclass이며 역할별 이미지 수, 원판 있음·없음 수, 전체 해시를 가진다.
@@ -526,7 +526,7 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 
 - [ ] **Step 1: 실패하는 테스트 작성** (합성 영상과 합성 `GroundTruthFrame`. 모델과 네트워크를 쓰지 않는다).
   - `test_export_places_frames_by_role_and_writes_yaml`
-  - `test_yaml_uses_relative_paths_and_single_class_plate`
+  - `test_yaml_uses_relative_paths_and_single_class_plate` (`path` 키 없음)
   - `test_label_text_is_normalized_from_pixel_box_and_empty_for_no_plate` (픽셀 박스는 손으로 계산한 값, 비정방 프레임으로 가로·세로 바뀜을 잡는다)
   - `test_empty_label_frames_are_exported_with_empty_label_files`
   - `test_export_rejects_non_empty_output_dir`
