@@ -644,6 +644,46 @@ Task 5의 라벨 점검 보고서를 팀이 보고 `docs/decisions/0002-label-re
 
 **이 Task에서 제외:** 원판 라벨 기준 평가, fine-tuning, 이미지 파일 생성, 가중치 내려받기.
 
+### Task 8b: 탐지 결과를 로컬 화면에서 확인하는 뷰어 (A2단계, 이슈 #2)
+
+**상태:** Task 8a의 COCO 실행 결과에서 `frisbee`, `clock` 같은 박스가 무엇을 감쌌는지는 확인하지 못했다(PR #18, 이슈 #2). 박스를 프레임 위에 **메모리에서만** 그려 로컬 화면에서 눈으로 확인하는 뷰어를 만든다. 얼굴이 담긴 화면이므로 이미지 파일을 쓰지 않고, 스크린샷을 이슈와 PR에 올리지 않는다. 이 Task는 성능을 계산하지 않는다.
+
+**Files:**
+- Create: `src/wl_snatch/detection_viewer.py`, `tutorials/view_detections.ipynb`
+- Test: `tests/test_detection_viewer.py`
+
+**Interfaces:**
+- Consumes: `FrameDetections`, `BoxDetection`, `GroundTruthFrame`, `frames.read_frames`, `detector.detect_frames_labeled`, `coco_baseline.load_coco_model`, `ground_truth.load_ground_truth`.
+- Produces:
+  - `class_color(label: str) -> tuple[int, int, int]`: 라벨 이름에서 `hashlib.md5`로 정한 BGR 색(실행마다 같다).
+  - `draw_detections(frame, boxes: Sequence[BoxDetection], *, min_confidence=0.0, label_filter: Collection[str] | None = None, color_for=class_color) -> np.ndarray`: 입력을 바꾸지 않고 복사본에 상자, 라벨, 신뢰도를 그린다. 프레임 밖으로 나간 좌표는 잘라서 그린다.
+  - `draw_truth(frame, boxes: Sequence[BoxDetection]) -> np.ndarray`: 탐지 색과 다른 단색 상자(참고용 원판 라벨).
+  - `DetectionViewSession(video_path, video_id, detections: Sequence[FrameDetections], truths: Sequence[GroundTruthFrame] = (), roles: Mapping[int, str] | None = None)`: `detections`에 있는 프레임만 보여 주고 한 번만 읽는다(`read_frames`). `frame_indices`, `goto(i)`, `step(delta)`(양끝에서 멈춤), `classes()`, `view(show_truth=False, label_filter=None, min_confidence=0.0) -> tuple[np.ndarray, list[str]]`(그린 프레임과 정보 줄: 프레임 번호, 역할, 클래스별 개수). `N/A` 프레임은 사유를 정보 줄에 보여 준다. `show()`는 ipywidgets를 메서드 안에서만 가져와 화면을 만든다(슬라이더, 클래스 선택, 신뢰도 하한, "참고용 원판 라벨" 체크상자 기본 꺼짐).
+  - `build_view_session(config, model, video_id, videos_dir, boxes_dir, videos, split, ranges_path=None) -> DetectionViewSession`: `load_ground_truth`로 그 영상의 라벨된 프레임만 얻어 그 프레임에서만 `model`을 실행한다.
+- `tutorials/view_detections.ipynb`: 첫 셀에 화면 캡처를 이슈와 PR에 올리지 말라는 경고, 설정 셀(모델 이름, 영상 ID), 세션 셀, `session.show()`. 코드는 패키지를 부르기만 한다.
+
+**규칙:** 원판 라벨 겹침은 "참고용 원판 라벨"로 표시하고 IoU나 정밀도 같은 수치를 계산하거나 보여 주지 않는다. 이미지 파일을 쓰지 않는다. 한 뷰어는 한 모델의 결과만 보여 준다.
+
+- [ ] **Step 1: 실패하는 테스트 작성** (합성 영상과 가짜 모델만 사용)
+  - `test_draw_detections_returns_a_copy_and_keeps_the_input`
+  - `test_class_color_is_stable_and_differs_between_labels`
+  - `test_draw_detections_clips_boxes_outside_the_frame`
+  - `test_session_shows_only_frames_present_in_detections`
+  - `test_goto_and_step_clamp_at_both_ends`
+  - `test_view_filters_by_label_and_min_confidence`
+  - `test_truth_overlay_is_off_by_default_and_uses_another_color`
+  - `test_info_lines_contain_frame_role_and_class_counts`
+  - `test_na_frame_is_shown_with_its_reason`
+  - `test_viewer_writes_no_image_file`
+  - `test_module_import_does_not_import_ultralytics_or_ipywidgets` (새 인터프리터)
+  - `test_build_view_session_runs_the_model_only_on_labeled_frames_of_that_video`
+- [ ] **Step 2: 실패 확인.** `uv run pytest tests/test_detection_viewer.py -v`
+- [ ] **Step 3: 구현.** 그리기는 `cv2`, 화면은 `ipywidgets`와 메모리 안의 `cv2.imencode`만 쓴다.
+- [ ] **Step 4: 통과 확인.** `uv run pytest -q`, `uv run ruff check`, 노트북 위생 검사.
+- [ ] **Step 5: 커밋.**
+
+**이 Task에서 제외:** 이미지 파일 저장, 성능 지표, 모델 비교, fine-tuning.
+
 ### Task 8: 모델 비교와 결정 기록
 
 **상태:** Task 8a(COCO 사전학습 그대로 실행)의 결과를 함께 본 뒤 fine-tuning 여부와 첫 학습 설정(backbone 동결, epoch, 학습률, 배치, seed)을 정한다(`docs/decisions/0003-baseline-setup.md`). 그 전에는 학습을 시작하지 않는다. 학습 구성은 학습 45장(원판 있음 39·없음 6), 검증 39장이다. 빈 라벨 6장은 학습용이고, 원판 없음 독립 평가는 별도 인원의 라벨이 생길 때까지 미평가로 명시한다.

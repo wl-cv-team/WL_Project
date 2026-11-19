@@ -38,6 +38,7 @@
 | 탐지기 | `config.py`, `detector.py` | 설정으로 모델과 장치를 고르고, 프레임에서 탐지한다. 단일 클래스 `plate` 가중치만 쓴다 | A단계(Task 7) |
 | 정답으로 평가하기 | `evaluation_run.py` | 정답을 영상별로 묶어 탐지하고 평가한다 | A단계(Task 7c) |
 | COCO 사전학습 그대로 실행 | `coco_baseline.py` | 원래 COCO 클래스 이름을 유지해 실행하고 클래스별 개수와 추론 시간을 기록한다. 원판 평가와 연결하지 않는다 | A2단계(Task 8a), 모델은 아직 실행하지 않음 |
+| 탐지 확인 뷰어 | `detection_viewer.py` | 탐지 박스를 메모리에서만 프레임 위에 그려 로컬 화면에서 확인한다. 이미지 파일을 쓰지 않고 성능을 계산하지 않는다 | 예정(Task 8b) |
 | 데이터셋 내보내기 | `dataset.py` | 학습용 폴더와 `dataset.yaml`을 `data/derived/` 아래에 만든다 | 예정(Task 6b, fine-tuning을 시작할 때) |
 | 학습 | `train.py` | 사전학습 가중치에서 시작해 `plate` 한 클래스로 학습하고 가중치 경로를 돌려준다 | 예정(Task 8) |
 | 비교 | `compare.py` | 한 번에 한 축만 바꾼 비교를 강제하고 CSV로 기록한다 | 예정(Task 8) |
