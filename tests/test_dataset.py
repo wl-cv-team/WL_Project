@@ -420,3 +420,12 @@ def test_assert_ignored_output_checks_all_four_export_paths(monkeypatch: pytest.
 
 def test_assert_ignored_output_allows_runs_folder_for_training_output():
     assert_ignored_output(REPO / "runs" / "plate", REPO)
+
+
+@pytest.mark.parametrize("dimensions", ["0 0.2", "0.2 0"])
+def test_verify_rejects_zero_area_label_before_hash_check(exported, dimensions):
+    _, _, out, yaml_path = exported
+    label = out / "labels/train/a01_sn_f_01_f0.txt"
+    label.write_text(f"0 0.5 0.5 {dimensions}\n")
+    with pytest.raises(ValueError, match="positive area"):
+        verify_exported_dataset(yaml_path)

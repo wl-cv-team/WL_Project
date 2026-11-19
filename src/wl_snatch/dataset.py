@@ -328,6 +328,8 @@ def _check_label_file(path: Path) -> int:
             cx, cy, w, h = (float(v) for v in parts[1:])
         except ValueError:
             raise ValueError(f"{path.name} line {number}: values are not numbers") from None
+        if w <= 0 or h <= 0:
+            raise ValueError(f"{path.name} line {number}: box must have positive area")
         if any(not 0.0 <= v <= 1.0 for v in (cx, cy, w, h)):
             raise ValueError(f"{path.name} line {number}: a value is outside 0..1")
         if cx - w / 2 < -_EPS or cx + w / 2 > 1 + _EPS or cy - h / 2 < -_EPS or cy + h / 2 > 1 + _EPS:
